@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+
+    <title>Smart Safety System</title>
+
+    <style>
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+            text-align: center;
+        }
+
+        h1 {
+            margin-bottom: 25px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: auto;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns:
+                repeat(auto-fit, minmax(200px, 1fr));
+
+            gap: 15px;
+        }
+
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .value {
+            font-size: 28px;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+
+        .normal {
+            color: green;
+        }
+
+        .danger {
+            color: red;
+        }
+
+        #lastUpdate {
+            margin: 20px;
+            color: #666;
+        }
+
+        table {
+            width: 100%;
+            margin-top: 30px;
+            border-collapse: collapse;
+            background: white;
+        }
+
+        th, td {
+            padding: 10px;
+            border: 1px solid #ddd;
+        }
+
+        th {
+            background: #eee;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>Smart Safety System</h1>
+
+    <div class="grid">
+
+        <div class="card">
+            <h3>Temperature</h3>
+            <div id="temperature" class="value">-- °C</div>
+        </div>
+
+        <div class="card">
+            <h3>Humidity</h3>
+            <div id="humidity" class="value">-- %</div>
+        </div>
+
+        <div class="card">
+            <h3>Gas</h3>
+            <div id="gas" class="value">--</div>
+        </div>
+
+        <div class="card">
+            <h3>Flame</h3>
+            <div id="flame" class="value">--</div>
+        </div>
+
+        <div class="card">
+            <h3>Fan</h3>
+            <div id="fan" class="value">--</div>
+        </div>
+
+        <div class="card">
+            <h3>Alarm</h3>
+            <div id="alarm" class="value">--</div>
+        </div>
+
+    </div>
+
+    <div id="lastUpdate">
+        Last update: --
+    </div>
+
+    <h2>History</h2>
+
+    <table>
+
+        <thead>
+
+            <tr>
+                <th>Time</th>
+                <th>Temperature</th>
+                <th>Humidity</th>
+                <th>Gas</th>
+                <th>Flame</th>
+                <th>Fan</th>
+                <th>Alarm</th>
+            </tr>
+
+        </thead>
+
+        <tbody id="history">
+        </tbody>
+
+    </table>
+
+</div>
+
+
+<script>
+
+async function loadLatest() {
+
+    try {
+
+        const response =
+            await fetch("/api/latest");
+
+        const data =
+            await response.json();
+
+        if (!data || !data.id) {
+            return;
+        }
+
+        document.getElementById("temperature")
+            .innerText =
+            data.temperature + " °C";
+
+        document.getElementById("humidity")
+            .innerText =
+            data.humidity + " %";
+
+        document.getElementById("gas")
+            .innerText =
+            data.gas;
+
+        document.getElementById("flame")
+            .innerText =
+            data.flame;
+
+        document.getElementById("fan")
+            .innerText =
+            data.fan ? "ON" : "OFF";
+
+        document.getElementById("alarm")
+            .innerText =
+            data.alarm ? "ACTIVE" : "NORMAL";
+
+        document.getElementById("alarm")
+            .className =
+            data.alarm
+                ? "value danger"
+                : "value normal";
+
+        document.getElementById("lastUpdate")
+            .innerText =
+            "Last update: " +
+            new Date(data.created_at)
+                .toLocaleString();
+
+    }
+
+    catch (error) {
+
+        console.error(error);
+
+    }
+}
+
+
+async function loadHistory() {
+
+    try {
+
+        const response =
+            await fetch("/api/history");
+
+        const data =
+            await response.json();
+
+        const table =
+            document.getElementById("history");
+
+        table.innerHTML = "";
+
+        data.forEach(row => {
+
+            const tr =
+                document.createElement("tr");
+
+            tr.innerHTML = `
+
+                <td>
+                    ${new Date(row.created_at)
+                        .toLocaleString()}
+                </td>
+
+                <td>
+                    ${row.temperature} °C
+                </td>
+
+                <td>
+                    ${row.humidity} %
+                </td>
+
+                <td>
+                    ${row.gas}
+                </td>
+
+                <td>
+                    ${row.flame}
+                </td>
+
+                <td>
+                    ${row.fan ? "ON" : "OFF"}
+                </td>
+
+                <td>
+                    ${row.alarm ? "ACTIVE" : "NORMAL"}
+                </td>
+
+            `;
+
+            table.appendChild(tr);
+
+        });
+
+    }
+
+    catch (error) {
+
+        console.error(error);
+
+    }
+}
+
+
+function refresh() {
+
+    loadLatest();
+    loadHistory();
+
+}
+
+
+refresh();
+
+setInterval(refresh, 3000);
+
+</script>
+
+</body>
+
+</html>
