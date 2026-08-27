@@ -31,6 +31,12 @@
 #define RELAY_ON LOW
 #define RELAY_OFF HIGH
 
+// Nem uyari sinirlari. Alarm DEGIL: fan, buzzer ve role etkilenmez,
+// sadece LCD'de donusumlu gosterilir.
+#define HUMIDITY_HIGH 95
+#define HUMIDITY_LOW 5
+#define SCREEN_SWAP_MS 2000
+
 // EEPROM: esikler elektrik kesintisinde kaybolmasin.
 //
 // Sihirli sayi 2 bayt: tek baytlik bir imza kartta kalmis eski veriyle
@@ -71,6 +77,10 @@ unsigned long lastLCD = 0;
 unsigned long lastNodeSend = 0;
 unsigned long lastDHT = 0;
 unsigned long lastPrint = 0;
+unsigned long lastScreenSwap = 0;
+
+// LCD nem uyari ekranini mi gosteriyor?
+bool showHumidityScreen = false;
 
 // NodeMCU'dan gelen komut satiri. Uno'da RAM kisitli:
 // SD + LCD + DHT + SoftwareSerial zaten yer yiyor, String kullanilmiyor.
@@ -369,43 +379,79 @@ void loop() {
   // LCD
   // -------------------------
 
+  // Nem sinir disindaysa LCD 2 saniye normal degerleri, 2 saniye
+  // uyariyi gosterir. Alarm varken uyari ekrani devre disi:
+  // o anda ekranda sensor degerleri durmali.
+  bool humidityWarn =
+    !isnan(humidity) &&
+    (humidity >= HUMIDITY_HIGH || humidity <= HUMIDITY_LOW);
+
+  if (!humidityWarn || alarm) {
+
+    showHumidityScreen = false;
+    lastScreenSwap = millis();
+
+  } else if (millis() - lastScreenSwap >= SCREEN_SWAP_MS) {
+
+    lastScreenSwap = millis();
+    showHumidityScreen = !showHumidityScreen;
+  }
+
   if (millis() - lastLCD >= 1000) {
 
     lastLCD = millis();
 
     lcd.clear();
 
-    lcd.setCursor(0, 0);
+    if (showHumidityScreen) {
 
-    if (isnan(temperature)) {
-      lcd.print(F("T:ERR"));
-    } else {
-      lcd.print(F("T:"));
-      lcd.print(temperature, 1);
-      lcd.print(F("C"));
-    }
+      lcd.setCursor(0, 0);
+      lcd.print(F("NEM UYARISI"));
 
-    lcd.print(F(" "));
-
-    if (isnan(humidity)) {
-      lcd.print(F("H:ERR"));
-    } else {
-      lcd.print(F("H:"));
-      lcd.print(humidity, 0);
+      lcd.setCursor(0, 1);
       lcd.print(F("%"));
-    }
+      lcd.print(humidity, 0);
 
-    lcd.setCursor(0, 1);
+      if (humidity >= HUMIDITY_HIGH) {
+        lcd.print(F(" COK NEMLI"));
+      } else {
+        lcd.print(F(" COK KURU"));
+      }
 
-    lcd.print(F("G:"));
-    lcd.print(gasValue);
+    } else {
 
-    lcd.print(F(" F:"));
-    lcd.print(flameValue);
+      lcd.setCursor(0, 0);
 
-    if (alarm) {
-      lcd.setCursor(15, 1);
-      lcd.print(remoteMute ? "M" : "!");
+      if (isnan(temperature)) {
+        lcd.print(F("T:ERR"));
+      } else {
+        lcd.print(F("T:"));
+        lcd.print(temperature, 1);
+        lcd.print(F("C"));
+      }
+
+      lcd.print(F(" "));
+
+      if (isnan(humidity)) {
+        lcd.print(F("H:ERR"));
+      } else {
+        lcd.print(F("H:"));
+        lcd.print(humidity, 0);
+        lcd.print(F("%"));
+      }
+
+      lcd.setCursor(0, 1);
+
+      lcd.print(F("G:"));
+      lcd.print(gasValue);
+
+      lcd.print(F(" F:"));
+      lcd.print(flameValue);
+
+      if (alarm) {
+        lcd.setCursor(15, 1);
+        lcd.print(remoteMute ? "M" : "!");
+      }
     }
   }
 

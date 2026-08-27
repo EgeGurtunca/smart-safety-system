@@ -58,6 +58,14 @@
         .normal { color: green; }
         .danger { color: red; }
 
+        .note {
+            font-size: 13px;
+            font-weight: bold;
+            margin-top: 6px;
+            min-height: 16px;
+            color: #b45309;
+        }
+
         #lastUpdate {
             margin: 20px;
             color: #666;
@@ -189,7 +197,11 @@
 
     <div class="grid">
         <div class="card"><h3>Sıcaklık</h3><div id="temperature" class="value">--</div></div>
-        <div class="card"><h3>Nem</h3><div id="humidity" class="value">--</div></div>
+        <div class="card">
+            <h3>Nem</h3>
+            <div id="humidity" class="value">--</div>
+            <div id="humidityNote" class="note"></div>
+        </div>
         <div class="card"><h3>Gaz</h3><div id="gas" class="value">--</div></div>
         <div class="card"><h3>Alev</h3><div id="flame" class="value">--</div></div>
         <div class="card"><h3>Fan</h3><div id="fan" class="value">--</div></div>
@@ -277,6 +289,11 @@
 <script>
 
 const TOKEN_KEY = "sss_token";
+
+// Nem uyari sinirlari. Alarm degil, sadece bilgilendirme:
+// fan, buzzer ve bildirim tetiklenmez.
+const HUMIDITY_HIGH = 95;
+const HUMIDITY_LOW = 5;
 
 let windowMinutes = 15;
 let chart = null;
@@ -462,6 +479,19 @@ async function loadLatest() {
 
         document.getElementById("temperature").innerText = show(data.temperature, " °C");
         document.getElementById("humidity").innerText = show(data.humidity, " %");
+
+        const note = document.getElementById("humidityNote");
+        const wet = data.humidity;
+
+        if (wet === null || wet === undefined) {
+            note.innerText = "";
+        } else if (wet >= HUMIDITY_HIGH) {
+            note.innerText = "ÇOK NEMLİ";
+        } else if (wet <= HUMIDITY_LOW) {
+            note.innerText = "ÇOK KURU";
+        } else {
+            note.innerText = "";
+        }
         document.getElementById("gas").innerText = show(data.gas, "");
         document.getElementById("flame").innerText = show(data.flame, "");
 
@@ -507,13 +537,31 @@ function setWindow(minutes) {
  * kendi ResizeObserver'imizi takiyoruz hem de her veri yenilemesinde
  * yeniden olcturuyoruz (boyut degismediyse Chart.js zaten islem yapmaz).
  */
-function keepSized(instance, canvasId) {
+function resizeChart(instance, canvasId) {
+
+    const box = document.getElementById(canvasId).parentElement;
+
+    // offsetWidth okumak yerlesimi senkron hesaplatir. Bu olmadan
+    // Chart.js kapsayiciyi olcerken 0 gorebiliyor -- yerlesim henuz
+    // hesaplanmamissa veya sayfa kare cizmiyorsa (arka plan sekmesi).
+    void box.offsetWidth;
 
     instance.resize();
+}
+
+
+function keepSized(instance, canvasId) {
+
+    resizeChart(instance, canvasId);
+
+    // Zamanlayici, kare cizimine bagli degil: requestAnimationFrame ve
+    // ResizeObserver sayfa gorunmezken hic tetiklenmeyebiliyor.
+    setTimeout(() => resizeChart(instance, canvasId), 150);
 
     if (typeof ResizeObserver === "undefined") return;
 
-    new ResizeObserver(() => instance.resize())
+    // Pencere yeniden boyutlandirilinca da uysun.
+    new ResizeObserver(() => resizeChart(instance, canvasId))
         .observe(document.getElementById(canvasId).parentElement);
 }
 
@@ -541,7 +589,7 @@ function drawChart(rows) {
     if (chart) {
         chart.data.labels = labels;
         chart.data.datasets.forEach((set, i) => { set.data = datasets[i].data; });
-        chart.resize();
+        resizeChart(chart, "chart");
         chart.update("none");
         return;
     }
@@ -579,22 +627,49 @@ function drawChart(rows) {
 }
 
 
+/**
+ * Alarmin sebebi veritabaninda tutulmuyor, sadece alarm biti var.
+ * Kayitli gaz/alev degerlerini guncel esiklerle karsilastirip cikariyoruz.
+ *
+ * Sinirlamasi: esikler sonradan degistirildiyse eski kayitlarin sebebi
+ * yeni esige gore hesaplanir. Cihazdaki kural birebir ayni.
+ */
+function alarmCause(row) {
+
+    const gasLimit = desired ? desired.gas_threshold : 400;
+    const flameLimit = desired ? desired.flame_threshold : 80;
+
+    return {
+        gas: row.gas !== null && row.gas !== undefined && row.gas >= gasLimit,
+        flame: row.flame !== null && row.flame !== undefined && row.flame <= flameLimit
+    };
+}
+
+
 function drawAlarmChart(rows) {
 
     if (typeof Chart === "undefined") return;
 
     const labels = rows.map(row => new Date(row.created_at).toLocaleTimeString());
 
+    // Ucu de 0/1. Tam ust uste cizilirse biri digerini tamamen gizler,
+    // bu yuzden her seri biraz farkli yukseklikte duruyor.
     const datasets = [
         {
-            label: "Alarm",
-            data: rows.map(row => row.alarm ? 1 : 0),
+            label: "Gaz alarmı",
+            data: rows.map(row => alarmCause(row).gas ? 1 : 0),
+            borderColor: "#f59e0b",
+            backgroundColor: "rgba(245,158,11,0.25)"
+        },
+        {
+            label: "Alev alarmı",
+            data: rows.map(row => alarmCause(row).flame ? 0.92 : 0),
             borderColor: "#ef4444",
             backgroundColor: "rgba(239,68,68,0.25)"
         },
         {
             label: "Fan",
-            data: rows.map(row => row.fan ? 1 : 0),
+            data: rows.map(row => row.fan ? 0.84 : 0),
             borderColor: "#3b82f6",
             backgroundColor: "rgba(59,130,246,0.15)"
         }
@@ -612,7 +687,7 @@ function drawAlarmChart(rows) {
     if (alarmChart) {
         alarmChart.data.labels = labels;
         alarmChart.data.datasets.forEach((set, i) => { set.data = datasets[i].data; });
-        alarmChart.resize();
+        resizeChart(alarmChart, "alarmChart");
         alarmChart.update("none");
         return;
     }
@@ -623,7 +698,7 @@ function drawAlarmChart(rows) {
             max: 1.1,
             ticks: {
                 stepSize: 1,
-                callback: value => value === 1 ? "AÇIK" : (value === 0 ? "KAPALI" : "")
+                callback: value => value === 1 ? "VAR" : (value === 0 ? "YOK" : "")
             }
         },
         x: { ticks: { maxTicksLimit: 6 } }
@@ -659,7 +734,18 @@ function fillAlarmLog(rows) {
         const now = Boolean(row.alarm);
 
         if (now && !previous) {
-            events.push(new Date(row.created_at).toLocaleString());
+
+            const cause = alarmCause(row);
+            const reasons = [];
+
+            if (cause.gas) reasons.push("Gaz " + row.gas);
+            if (cause.flame) reasons.push("Alev " + row.flame);
+
+            events.push(
+                new Date(row.created_at).toLocaleString() +
+                " — " +
+                (reasons.length ? reasons.join(" + ") : "sebep eşiklerden çıkarılamadı")
+            );
         }
 
         previous = now;

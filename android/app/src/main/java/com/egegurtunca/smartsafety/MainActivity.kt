@@ -48,6 +48,10 @@ import org.json.JSONObject
 
 private val DANGER = Color(0xFFEF4444)
 private val SAFE = Color(0xFF10B981)
+private val WARN = Color(0xFFF59E0B)
+
+private const val HUMIDITY_HIGH = 95.0
+private const val HUMIDITY_LOW = 5.0
 
 class MainActivity : ComponentActivity() {
 
@@ -245,7 +249,8 @@ fun AppScreen() {
             ValueCard(
                 "Nem",
                 reading?.humidity?.let { String.format("%.0f %%", it) },
-                Modifier.weight(1f)
+                Modifier.weight(1f),
+                note = humidityNote(reading?.humidity)
             )
         }
 
@@ -442,7 +447,12 @@ fun AppScreen() {
 
 
 @Composable
-private fun ValueCard(title: String, value: String?, modifier: Modifier = Modifier) {
+private fun ValueCard(
+    title: String,
+    value: String?,
+    modifier: Modifier = Modifier,
+    note: String? = null
+) {
 
     Card(modifier) {
         Column(Modifier.padding(16.dp)) {
@@ -454,8 +464,26 @@ private fun ValueCard(title: String, value: String?, modifier: Modifier = Modifi
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold
             )
+
+            if (!note.isNullOrBlank()) {
+                Text(
+                    text = note,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = WARN
+                )
+            }
         }
     }
+}
+
+
+/** Nem uyarisi. Alarm degil: fan, buzzer ve bildirim tetiklenmez. */
+private fun humidityNote(humidity: Double?): String? = when {
+    humidity == null -> null
+    humidity >= HUMIDITY_HIGH -> "ÇOK NEMLİ"
+    humidity <= HUMIDITY_LOW -> "ÇOK KURU"
+    else -> null
 }
 
 
