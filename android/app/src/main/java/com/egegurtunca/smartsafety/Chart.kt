@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -83,7 +84,10 @@ fun SensorChart(rows: List<Reading>, modifier: Modifier = Modifier) {
 
                 val grid = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
 
-                Canvas(Modifier.fillMaxWidth().height(200.dp)) {
+                // Kutunun kalan alanini doldur. Sabit 200.dp verilirse
+                // ustteki 8.dp padding yuzunden alttan kirpilir --
+                // 0-100 olceginde en altta seyreden sicaklik cizgisi kaybolur.
+                Canvas(Modifier.fillMaxSize()) {
 
                     for (i in 0..4) {
                         val y = size.height * i / 4f

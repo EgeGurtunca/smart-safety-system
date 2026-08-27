@@ -132,6 +132,28 @@
 
         .tabs button { padding: 8px 14px; font-size: 14px; }
 
+        button.small {
+            padding: 6px 12px;
+            font-size: 13px;
+        }
+
+        #tokenState {
+            font-size: 13px;
+            color: #444;
+        }
+
+        .logList {
+            margin-top: 8px;
+            font-size: 13px;
+            max-height: 160px;
+            overflow-y: auto;
+        }
+
+        .logList div {
+            padding: 4px 0;
+            border-bottom: 1px solid #eee;
+        }
+
         .tabs button.active {
             background: #111827;
             color: white;
@@ -203,6 +225,12 @@
 
         <div id="thresholdMsg" class="hint"></div>
 
+        <div class="row" style="margin-top:15px">
+            <span id="tokenState" class="small"></span>
+            <button class="small" onclick="askToken()">Anahtarı değiştir</button>
+            <button class="small" onclick="clearToken()">Anahtarı sil</button>
+        </div>
+
     </div>
 
     <h2>Grafik</h2>
@@ -216,6 +244,17 @@
 
     <div class="chartBox" style="margin-top:10px">
         <canvas id="chart"></canvas>
+    </div>
+
+    <h2>Alarm ve fan geçmişi</h2>
+
+    <div class="chartBox" style="margin-top:10px">
+        <canvas id="alarmChart"></canvas>
+    </div>
+
+    <div class="panel" style="text-align:left">
+        <strong>Alarm başlangıçları</strong>
+        <div id="alarmLog" class="logList"></div>
     </div>
 
     <h2>Geçmiş</h2>
@@ -241,6 +280,7 @@ const TOKEN_KEY = "sss_token";
 
 let windowMinutes = 15;
 let chart = null;
+let alarmChart = null;
 
 let deviceFan = null;
 let desired = null;
@@ -263,15 +303,29 @@ function askToken() {
 }
 
 
+function clearToken() {
+
+    localStorage.removeItem(TOKEN_KEY);
+    updateTokenBanner();
+}
+
+
 function updateTokenBanner() {
 
-    const missing = !getToken();
+    const token = getToken();
+    const missing = !token;
 
     document.getElementById("tokenBanner").style.display = missing ? "block" : "none";
 
     ["fanBtn", "muteBtn", "saveBtn"].forEach(id => {
         document.getElementById(id).disabled = missing;
     });
+
+    // Anahtarin tamamini gostermiyoruz; girilip girilmedigi yeterli.
+    document.getElementById("tokenState").innerText =
+        missing
+            ? "Anahtar girilmedi"
+            : "Anahtar: " + token.slice(0, 4) + "…" + token.slice(-4);
 }
 
 
@@ -442,6 +496,28 @@ function setWindow(minutes) {
 }
 
 
+/**
+ * Chart.js kapsayiciyi olcup canvas'i ona gore boyutlandiriyor. Grafik
+ * sayfa yerlesimi tamamlanmadan olusursa 0 genislik olculuyor ve kendi
+ * ResizeObserver'i "boyut degismedi" diye bir daha tetiklenmiyor --
+ * grafik hic gorunmuyor.
+ *
+ * requestAnimationFrame yetmiyor: sayfa arka planda veya gorunmezken
+ * kare cizilmedigi icin geri cagri hic calismayabiliyor. Bu yuzden hem
+ * kendi ResizeObserver'imizi takiyoruz hem de her veri yenilemesinde
+ * yeniden olcturuyoruz (boyut degismediyse Chart.js zaten islem yapmaz).
+ */
+function keepSized(instance, canvasId) {
+
+    instance.resize();
+
+    if (typeof ResizeObserver === "undefined") return;
+
+    new ResizeObserver(() => instance.resize())
+        .observe(document.getElementById(canvasId).parentElement);
+}
+
+
 function drawChart(rows) {
 
     if (typeof Chart === "undefined") return;
@@ -465,6 +541,7 @@ function drawChart(rows) {
     if (chart) {
         chart.data.labels = labels;
         chart.data.datasets.forEach((set, i) => { set.data = datasets[i].data; });
+        chart.resize();
         chart.update("none");
         return;
     }
@@ -498,8 +575,99 @@ function drawChart(rows) {
     // 0 genislikte olculuyor ve Chart.js'in ResizeObserver'i boyut
     // "degismedigi" icin bir daha tetiklenmiyor -- grafik hic gorunmuyor.
     // Yerlesim kesinlestikten sonra bir kez daha olcturuyoruz.
-    chart.resize();
-    requestAnimationFrame(() => chart.resize());
+    keepSized(chart, "chart");
+}
+
+
+function drawAlarmChart(rows) {
+
+    if (typeof Chart === "undefined") return;
+
+    const labels = rows.map(row => new Date(row.created_at).toLocaleTimeString());
+
+    const datasets = [
+        {
+            label: "Alarm",
+            data: rows.map(row => row.alarm ? 1 : 0),
+            borderColor: "#ef4444",
+            backgroundColor: "rgba(239,68,68,0.25)"
+        },
+        {
+            label: "Fan",
+            data: rows.map(row => row.fan ? 1 : 0),
+            borderColor: "#3b82f6",
+            backgroundColor: "rgba(59,130,246,0.15)"
+        }
+    ];
+
+    // Basamak cizgisi: 0/1 degerleri egimli cizilirse olmayan
+    // ara durumlar varmis gibi gorunur.
+    datasets.forEach(set => {
+        set.stepped = true;
+        set.fill = true;
+        set.borderWidth = 2;
+        set.pointRadius = 0;
+    });
+
+    if (alarmChart) {
+        alarmChart.data.labels = labels;
+        alarmChart.data.datasets.forEach((set, i) => { set.data = datasets[i].data; });
+        alarmChart.resize();
+        alarmChart.update("none");
+        return;
+    }
+
+    const scales = {
+        y: {
+            min: -0.1,
+            max: 1.1,
+            ticks: {
+                stepSize: 1,
+                callback: value => value === 1 ? "AÇIK" : (value === 0 ? "KAPALI" : "")
+            }
+        },
+        x: { ticks: { maxTicksLimit: 6 } }
+    };
+
+    alarmChart = new Chart(document.getElementById("alarmChart"), {
+        type: "line",
+        data: { labels: labels, datasets: datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: { mode: "index", intersect: false },
+            scales: scales
+        }
+    });
+
+    keepSized(alarmChart, "alarmChart");
+}
+
+
+function fillAlarmLog(rows) {
+
+    const box = document.getElementById("alarmLog");
+
+    // Sadece 0 -> 1 gecisleri. Alarm suresince her satiri listelemek
+    // tek bir olayi yuzlerce satir gibi gosterirdi.
+    const events = [];
+    let previous = false;
+
+    rows.forEach(row => {
+
+        const now = Boolean(row.alarm);
+
+        if (now && !previous) {
+            events.push(new Date(row.created_at).toLocaleString());
+        }
+
+        previous = now;
+    });
+
+    box.innerHTML = events.length
+        ? events.slice(-20).reverse().map(t => "<div>" + t + "</div>").join("")
+        : "<div>Bu aralıkta alarm yok</div>";
 }
 
 
@@ -538,6 +706,8 @@ async function loadHistory() {
         if (!Array.isArray(rows)) return;
 
         drawChart(rows);
+        drawAlarmChart(rows);
+        fillAlarmLog(rows);
         fillTable(rows);
 
     } catch (error) {
