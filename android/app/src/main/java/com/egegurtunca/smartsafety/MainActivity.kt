@@ -104,6 +104,8 @@ fun AppScreen() {
 
     var gasField by remember { mutableStateOf("") }
     var flameField by remember { mutableStateOf("") }
+    var riseField by remember { mutableStateOf("") }
+    var maxField by remember { mutableStateOf("") }
     var fieldsFilled by remember { mutableStateOf(false) }
 
     // Canli degerler ve komut durumu
@@ -133,6 +135,8 @@ fun AppScreen() {
                     if (!fieldsFilled) {
                         gasField = it.gasThreshold.toString()
                         flameField = it.flameThreshold.toString()
+                        riseField = it.tempRise.toString()
+                        maxField = it.tempMax.toString()
                         fieldsFilled = true
                     }
                 }
@@ -335,20 +339,60 @@ fun AppScreen() {
                     )
                 }
 
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+
+                    OutlinedTextField(
+                        value = riseField,
+                        onValueChange = { riseField = it },
+                        label = { Text("Isınma °C/dk") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    OutlinedTextField(
+                        value = maxField,
+                        onValueChange = { maxField = it },
+                        label = { Text("Sıcaklık tavanı") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
                 Button(
                     onClick = {
                         val gas = gasField.toIntOrNull()
                         val flame = flameField.toIntOrNull()
+                        val rise = riseField.toIntOrNull()
+                        val ceiling = maxField.toIntOrNull()
 
                         if (gas == null || flame == null ||
                             gas !in 0..Api.SENSOR_MAX || flame !in 0..Api.SENSOR_MAX
                         ) {
-                            message = "Eşikler 0-${Api.SENSOR_MAX} arasında olmalı"
+                            message =
+                                "Gaz ve alev eşiği 0-${Api.SENSOR_MAX} arasında olmalı"
+
+                        } else if (rise == null ||
+                            rise !in Api.TEMP_RISE_MIN..Api.TEMP_RISE_MAX
+                        ) {
+                            message =
+                                "Isınma ${Api.TEMP_RISE_MIN}-${Api.TEMP_RISE_MAX} °C/dk olmalı"
+
+                        } else if (ceiling == null || ceiling !in 0..Api.TEMP_MAX_LIMIT) {
+                            // DHT11 50 C ustunu olcemiyor; daha yuksek tavan hic tetiklenmez.
+                            message = "Sıcaklık tavanı 0-${Api.TEMP_MAX_LIMIT} °C olmalı"
+
                         } else {
                             send(
                                 JSONObject()
                                     .put("gas_threshold", gas)
-                                    .put("flame_threshold", flame),
+                                    .put("flame_threshold", flame)
+                                    .put("temp_rise", rise)
+                                    .put("temp_max", ceiling),
                                 "Eşikler kaydedildi"
                             )
                         }

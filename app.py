@@ -33,8 +33,13 @@ DEFAULT_COMMAND = {
     "fan_request": False,
     "mute": False,
     "gas_threshold": 400,
-    "flame_threshold": 80
+    "flame_threshold": 80,
+    "temp_rise": 5,
+    "temp_max": 45
 }
+
+# DHT11 sadece 0-50 C olcuyor; ustundeki bir tavan hic tetiklenmez.
+TEMP_MAX_LIMIT = 50
 
 
 def now_iso():
@@ -156,7 +161,9 @@ def device_command(command):
         "fan": int(truthy(command.get("fan_request"))),
         "mute": int(truthy(command.get("mute"))),
         "gt": int(command.get("gas_threshold") or DEFAULT_COMMAND["gas_threshold"]),
-        "ft": int(command.get("flame_threshold") or DEFAULT_COMMAND["flame_threshold"])
+        "ft": int(command.get("flame_threshold") or DEFAULT_COMMAND["flame_threshold"]),
+        "tr": int(command.get("temp_rise") or DEFAULT_COMMAND["temp_rise"]),
+        "tm": int(command.get("temp_max") or DEFAULT_COMMAND["temp_max"])
     }
 
 
@@ -194,6 +201,7 @@ def alarm_message(record, command):
 
     gas = record.get("gas")
     flame = record.get("flame")
+    temperature = record.get("temperature")
 
     if gas is not None and gas >= limits["gt"]:
         reasons.append("gaz " + str(gas))
@@ -201,9 +209,16 @@ def alarm_message(record, command):
     if flame is not None and flame <= limits["ft"]:
         reasons.append("alev " + str(flame))
 
+    if temperature is not None and temperature >= limits["tm"]:
+        reasons.append("sicaklik " + str(temperature))
+
+    # Hizli isinma alarmi cihazda 60 saniyelik pencereyle hesaplaniyor;
+    # sunucu tek kayda bakarak bunu goremez.
+    fallback = "belirlenemedi (hizli sicaklik yukselisi olabilir)"
+
     return (
         "ALARM - Smart Safety System\n"
-        "Sebep: " + (", ".join(reasons) if reasons else "bilinmiyor") + "\n"
+        "Sebep: " + (", ".join(reasons) if reasons else fallback) + "\n"
         "Gaz: " + str(gas) + "  Alev: " + str(flame) + "\n"
         "Sicaklik: " + str(record.get("temperature")) + " C  "
         "Nem: " + str(record.get("humidity")) + " %"
@@ -328,6 +343,8 @@ def get_command():
             "mute": truthy(command.get("mute")),
             "gas_threshold": command.get("gas_threshold"),
             "flame_threshold": command.get("flame_threshold"),
+            "temp_rise": command.get("temp_rise"),
+            "temp_max": command.get("temp_max"),
             "updated_at": command.get("updated_at")
         })
 
@@ -355,9 +372,13 @@ def set_command():
     if "mute" in data:
         patch["mute"] = truthy(data["mute"])
 
-    for key, column in (
-        ("gas_threshold", "gas_threshold"),
-        ("flame_threshold", "flame_threshold")
+    # Her alanin kendi gecerli araligi var; cihaza sacma esik gitmesin.
+    # gaz/alev analogRead sinirlari, sicaklik DHT11'in olcebildigi aralik.
+    for key, low, high in (
+        ("gas_threshold", 0, 1023),
+        ("flame_threshold", 0, 1023),
+        ("temp_rise", 1, 30),
+        ("temp_max", 0, TEMP_MAX_LIMIT)
     ):
 
         if key not in data:
@@ -372,14 +393,13 @@ def set_command():
                 "error": key + " sayi olmali"
             }), 400
 
-        # analogRead sinirlari; cihaza sacma esik gitmesin.
-        if not 0 <= value <= 1023:
+        if not low <= value <= high:
             return jsonify({
                 "success": False,
-                "error": key + " 0-1023 araliginda olmali"
+                "error": "%s %d-%d araliginda olmali" % (key, low, high)
             }), 400
 
-        patch[column] = value
+        patch[key] = value
 
     if not patch:
         return jsonify({

@@ -16,6 +16,18 @@ create table if not exists commands (
 insert into commands (id) values (1)
 on conflict (id) do nothing;
 
+-- Sicaklik alarmi esikleri.
+-- temp_rise: 60 saniyede bu kadar C yukselirse alarm (yangin imzasi).
+-- temp_max:  mutlak tavan. DHT11 sadece 0-50 C olcuyor, 50 uzeri
+--            deger verirsen alarm hic tetiklenmez.
+-- Tablo zaten kuruluysa bu satirlar eksik kolonlari ekler.
+alter table commands add column if not exists temp_rise int default 5;
+alter table commands add column if not exists temp_max int default 45;
+
+update commands set temp_rise = coalesce(temp_rise, 5),
+                    temp_max  = coalesce(temp_max, 45)
+where id = 1;
+
 -- Gecmis sorgulari zaman araligiyla filtreliyor.
 create index if not exists sensor_data_created_at_idx
   on sensor_data (created_at desc);

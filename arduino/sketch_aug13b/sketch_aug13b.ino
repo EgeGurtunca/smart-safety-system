@@ -55,6 +55,8 @@ int cmdFan = 0;
 int cmdMute = 0;
 int cmdGas = 400;
 int cmdFlame = 80;
+int cmdTempRise = 5;
+int cmdTempMax = 45;
 
 unsigned long lastSend = 0;
 unsigned long lastBlink = 0;
@@ -291,7 +293,9 @@ void sendCommandToArduino() {
     "#F" + String(cmdFan) +
     ",M" + String(cmdMute) +
     ",G" + String(cmdGas) +
-    ",L" + String(cmdFlame);
+    ",L" + String(cmdFlame) +
+    ",R" + String(cmdTempRise) +
+    ",X" + String(cmdTempMax);
 
   arduinoSerial.println(line);
 
@@ -381,7 +385,7 @@ void sendToServer() {
 
     // -------------------------------------------
     // Komut cevaba binmis halde geliyor:
-    // {"success":true,"cmd":{"fan":0,"mute":0,"gt":400,"ft":80}}
+    // {"success":true,"cmd":{"fan":0,"mute":0,"gt":400,"ft":80,"tr":5,"tm":45}}
     // -------------------------------------------
 
     if (httpCode == 200 && response.indexOf("\"cmd\"") >= 0) {
@@ -390,14 +394,19 @@ void sendToServer() {
       int muteValue = extractInt(response, "mute", -1);
       int gasValue = extractInt(response, "gt", -1);
       int flameValue = extractInt(response, "ft", -1);
+      int riseValue = extractInt(response, "tr", -1);
+      int maxValue = extractInt(response, "tm", -1);
 
       if (fanValue >= 0 && muteValue >= 0 &&
-          gasValue >= 0 && flameValue >= 0) {
+          gasValue >= 0 && flameValue >= 0 &&
+          riseValue >= 0 && maxValue >= 0) {
 
         cmdFan = fanValue;
         cmdMute = muteValue;
         cmdGas = gasValue;
         cmdFlame = flameValue;
+        cmdTempRise = riseValue;
+        cmdTempMax = maxValue;
 
         sendCommandToArduino();
 

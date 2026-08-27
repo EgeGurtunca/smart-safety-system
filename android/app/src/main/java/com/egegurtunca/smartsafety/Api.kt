@@ -24,7 +24,9 @@ data class Command(
     val fan: Boolean,
     val mute: Boolean,
     val gasThreshold: Int,
-    val flameThreshold: Int
+    val flameThreshold: Int,
+    val tempRise: Int,
+    val tempMax: Int
 )
 
 sealed class ApiResult<out T> {
@@ -38,6 +40,11 @@ object Api {
 
     /** Sunucu tarafi -1 gibi sacma esik kabul etmiyor; burada da ayni sinir. */
     const val SENSOR_MAX = 1023
+
+    /** DHT11 sadece 0-50 C olcuyor; ustundeki tavan hic tetiklenmez. */
+    const val TEMP_MAX_LIMIT = 50
+    const val TEMP_RISE_MIN = 1
+    const val TEMP_RISE_MAX = 30
 
     // ---------------------------------------------------------------
     // HTTP
@@ -193,7 +200,9 @@ object Api {
                 fan = json.optBoolean("fan", false),
                 mute = json.optBoolean("mute", false),
                 gasThreshold = json.optInt("gas_threshold", 400),
-                flameThreshold = json.optInt("flame_threshold", 80)
+                flameThreshold = json.optInt("flame_threshold", 80),
+                tempRise = json.optInt("temp_rise", 5),
+                tempMax = json.optInt("temp_max", 45)
             )
         )
     }

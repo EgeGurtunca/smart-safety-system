@@ -231,6 +231,14 @@
                 <input id="flameThreshold" type="number" min="0" max="1023">
             </label>
 
+            <label title="60 saniyede bu kadar °C yükselirse alarm">Isınma °C/dk
+                <input id="tempRise" type="number" min="1" max="30">
+            </label>
+
+            <label title="DHT11 en fazla 50 °C ölçebiliyor">Sıcaklık tavanı
+                <input id="tempMax" type="number" min="0" max="50">
+            </label>
+
             <button id="saveBtn" onclick="saveThresholds()">Kaydet</button>
 
         </div>
@@ -413,6 +421,12 @@ async function loadCommand() {
         if (document.activeElement !== gasInput) gasInput.value = data.gas_threshold;
         if (document.activeElement !== flameInput) flameInput.value = data.flame_threshold;
 
+        const riseInput = document.getElementById("tempRise");
+        const maxInput = document.getElementById("tempMax");
+
+        if (document.activeElement !== riseInput) riseInput.value = data.temp_rise;
+        if (document.activeElement !== maxInput) maxInput.value = data.temp_max;
+
         updateHint();
 
     } catch (error) {
@@ -455,7 +469,9 @@ async function saveThresholds() {
 
     const result = await postCommand({
         gas_threshold: Number(document.getElementById("gasThreshold").value),
-        flame_threshold: Number(document.getElementById("flameThreshold").value)
+        flame_threshold: Number(document.getElementById("flameThreshold").value),
+        temp_rise: Number(document.getElementById("tempRise").value),
+        temp_max: Number(document.getElementById("tempMax").value)
     });
 
     if (result) {
@@ -634,14 +650,41 @@ function drawChart(rows) {
  * Sinirlamasi: esikler sonradan degistirildiyse eski kayitlarin sebebi
  * yeni esige gore hesaplanir. Cihazdaki kural birebir ayni.
  */
-function alarmCause(row) {
+function alarmCause(row, rows, index) {
 
     const gasLimit = desired ? desired.gas_threshold : 400;
     const flameLimit = desired ? desired.flame_threshold : 80;
+    const riseLimit = desired ? desired.temp_rise : 5;
+    const maxLimit = desired ? desired.temp_max : 45;
+
+    const temp = row.temperature;
+    const has = v => v !== null && v !== undefined;
+
+    // Cihaz 60 saniyelik pencereye bakiyor; burada da ayni pencere,
+    // gecmis dizisinde 60 saniye onceki kayit aranarak bulunuyor.
+    let rise = false;
+
+    if (has(temp) && Array.isArray(rows) && index > 0) {
+
+        const now = new Date(row.created_at).getTime();
+
+        for (let i = index - 1; i >= 0; i--) {
+
+            const past = new Date(rows[i].created_at).getTime();
+
+            if (now - past >= 60000) {
+                rise = has(rows[i].temperature) &&
+                       (temp - rows[i].temperature) >= riseLimit;
+                break;
+            }
+        }
+    }
 
     return {
-        gas: row.gas !== null && row.gas !== undefined && row.gas >= gasLimit,
-        flame: row.flame !== null && row.flame !== undefined && row.flame <= flameLimit
+        gas: has(row.gas) && row.gas >= gasLimit,
+        flame: has(row.flame) && row.flame <= flameLimit,
+        tempMax: has(temp) && temp >= maxLimit,
+        tempRise: rise
     };
 }
 
@@ -657,19 +700,28 @@ function drawAlarmChart(rows) {
     const datasets = [
         {
             label: "Gaz alarmı",
-            data: rows.map(row => alarmCause(row).gas ? 1 : 0),
+            data: rows.map((row, i) => alarmCause(row, rows, i).gas ? 1 : 0),
             borderColor: "#f59e0b",
             backgroundColor: "rgba(245,158,11,0.25)"
         },
         {
             label: "Alev alarmı",
-            data: rows.map(row => alarmCause(row).flame ? 0.92 : 0),
+            data: rows.map((row, i) => alarmCause(row, rows, i).flame ? 0.92 : 0),
             borderColor: "#ef4444",
             backgroundColor: "rgba(239,68,68,0.25)"
         },
         {
+            label: "Sıcaklık alarmı",
+            data: rows.map((row, i) => {
+                const c = alarmCause(row, rows, i);
+                return (c.tempMax || c.tempRise) ? 0.84 : 0;
+            }),
+            borderColor: "#8b5cf6",
+            backgroundColor: "rgba(139,92,246,0.25)"
+        },
+        {
             label: "Fan",
-            data: rows.map(row => row.fan ? 0.84 : 0),
+            data: rows.map(row => row.fan ? 0.76 : 0),
             borderColor: "#3b82f6",
             backgroundColor: "rgba(59,130,246,0.15)"
         }
@@ -729,17 +781,19 @@ function fillAlarmLog(rows) {
     const events = [];
     let previous = false;
 
-    rows.forEach(row => {
+    rows.forEach((row, index) => {
 
         const now = Boolean(row.alarm);
 
         if (now && !previous) {
 
-            const cause = alarmCause(row);
+            const cause = alarmCause(row, rows, index);
             const reasons = [];
 
             if (cause.gas) reasons.push("Gaz " + row.gas);
             if (cause.flame) reasons.push("Alev " + row.flame);
+            if (cause.tempMax) reasons.push("Sıcaklık " + row.temperature + "°C");
+            if (cause.tempRise) reasons.push("Hızlı ısınma (" + row.temperature + "°C)");
 
             events.push(
                 new Date(row.created_at).toLocaleString() +

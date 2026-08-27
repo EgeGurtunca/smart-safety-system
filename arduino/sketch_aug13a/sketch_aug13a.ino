@@ -28,6 +28,19 @@
 #define GAS_THRESHOLD_DEFAULT 400
 #define FLAME_THRESHOLD_DEFAULT 80
 
+// Sicaklik alarmi.
+// TEMP_RISE: 60 saniyede bu kadar C yukselirse alarm. Yanginin imzasi
+//   mutlak sicaklik degil, hizli yukselistir -- mutlak esik yazin yanlis
+//   alarm verir, kisin gec kalir.
+// TEMP_MAX: mutlak tavan, yavas yukselen durumu yakalar.
+//   DHT11 sadece 0-50 C olcuyor, 50 uzeri bir tavan hic tetiklenmez.
+#define TEMP_RISE_DEFAULT 5
+#define TEMP_MAX_DEFAULT 45
+
+// 6 x 10 saniye = 60 saniyelik kayan pencere.
+#define TEMP_HISTORY 6
+#define TEMP_SAMPLE_MS 10000
+
 #define RELAY_ON LOW
 #define RELAY_OFF HIGH
 
@@ -41,10 +54,16 @@
 //
 // Sihirli sayi 2 bayt: tek baytlik bir imza kartta kalmis eski veriyle
 // tesadufen eslesip cop degerleri gecerli sanmaya yol aciyordu.
-#define EEPROM_MAGIC 0xA55A
+// Sicaklik esikleri eklenince duzen degisti; magic'i artirmak eski
+// kartlardaki yarim veriyi otomatik sifirlar.
+#define EEPROM_MAGIC 0xA55B
 #define EEPROM_ADDR_MAGIC 0
 #define EEPROM_ADDR_GAS 2
 #define EEPROM_ADDR_FLAME 4
+#define EEPROM_ADDR_TEMP_RISE 10
+#define EEPROM_ADDR_TEMP_MAX 12
+#define EEPROM_ADDR_TEMP_RISE_DEF 14
+#define EEPROM_ADDR_TEMP_MAX_DEF 16
 
 // Son damgalamada gecerli olan derleme varsayilanlari da saklaniyor.
 // Kodda varsayilani degistirip yuklersen EEPROM'daki eski deger degil
@@ -66,6 +85,14 @@ bool remoteMute = false;
 
 int gasThreshold = GAS_THRESHOLD_DEFAULT;
 int flameThreshold = FLAME_THRESHOLD_DEFAULT;
+int tempRise = TEMP_RISE_DEFAULT;
+int tempMax = TEMP_MAX_DEFAULT;
+
+// Sicaklik gecmisi: 10 saniyede bir ornek, 60 saniye once ile karsilastirilir.
+float tempHistory[TEMP_HISTORY];
+byte tempIndex = 0;
+bool tempHistoryFull = false;
+unsigned long lastTempSample = 0;
 
 // DHT11 saniyede birden fazla okumada nan doner ve ~250 ms bloklar,
 // bu yuzden zamanlayiciya bagli ve deger onbellekleniyor.
@@ -84,7 +111,7 @@ bool showHumidityScreen = false;
 
 // NodeMCU'dan gelen komut satiri. Uno'da RAM kisitli:
 // SD + LCD + DHT + SoftwareSerial zaten yer yiyor, String kullanilmiyor.
-char cmdBuf[24];
+char cmdBuf[32];
 byte cmdLen = 0;
 
 
@@ -101,12 +128,19 @@ void saveThresholds() {
 
   // EEPROM.put degismeyen baytlari yazmiyor; ayrica sadece
   // deger degistiginde cagriliyor (~100k yazim omru).
+  int riseDefault = TEMP_RISE_DEFAULT;
+  int maxDefault = TEMP_MAX_DEFAULT;
+
   EEPROM.put(EEPROM_ADDR_MAGIC, magic);
   EEPROM.put(EEPROM_ADDR_GAS, gasThreshold);
   EEPROM.put(EEPROM_ADDR_FLAME, flameThreshold);
+  EEPROM.put(EEPROM_ADDR_TEMP_RISE, tempRise);
+  EEPROM.put(EEPROM_ADDR_TEMP_MAX, tempMax);
 
   EEPROM.put(EEPROM_ADDR_GAS_DEF, gasDefault);
   EEPROM.put(EEPROM_ADDR_FLAME_DEF, flameDefault);
+  EEPROM.put(EEPROM_ADDR_TEMP_RISE_DEF, riseDefault);
+  EEPROM.put(EEPROM_ADDR_TEMP_MAX_DEF, maxDefault);
 }
 
 void loadThresholds() {
@@ -123,12 +157,18 @@ void loadThresholds() {
 
   int gasDefault;
   int flameDefault;
+  int riseDefault;
+  int maxDefault;
 
   EEPROM.get(EEPROM_ADDR_GAS_DEF, gasDefault);
   EEPROM.get(EEPROM_ADDR_FLAME_DEF, flameDefault);
+  EEPROM.get(EEPROM_ADDR_TEMP_RISE_DEF, riseDefault);
+  EEPROM.get(EEPROM_ADDR_TEMP_MAX_DEF, maxDefault);
 
   if (gasDefault != GAS_THRESHOLD_DEFAULT ||
-      flameDefault != FLAME_THRESHOLD_DEFAULT) {
+      flameDefault != FLAME_THRESHOLD_DEFAULT ||
+      riseDefault != TEMP_RISE_DEFAULT ||
+      maxDefault != TEMP_MAX_DEFAULT) {
 
     // Kodda varsayilan degistirilmis: derlenen deger kazanir,
     // EEPROM'daki eski deger uzerine yazilir.
@@ -140,9 +180,13 @@ void loadThresholds() {
 
   int g;
   int f;
+  int r;
+  int m;
 
   EEPROM.get(EEPROM_ADDR_GAS, g);
   EEPROM.get(EEPROM_ADDR_FLAME, f);
+  EEPROM.get(EEPROM_ADDR_TEMP_RISE, r);
+  EEPROM.get(EEPROM_ADDR_TEMP_MAX, m);
 
   // Cop deger okunursa varsayilanda kal.
   if (g >= 0 && g <= 1023) {
@@ -151,6 +195,14 @@ void loadThresholds() {
 
   if (f >= 0 && f <= 1023) {
     flameThreshold = f;
+  }
+
+  if (r >= 1 && r <= 30) {
+    tempRise = r;
+  }
+
+  if (m >= 0 && m <= 50) {
+    tempMax = m;
   }
 }
 
@@ -181,20 +233,31 @@ void applyCommand(const char *line) {
 
   int g = fieldValue(line, 'G', gasThreshold);
   int f = fieldValue(line, 'L', flameThreshold);
+  int r = fieldValue(line, 'R', tempRise);
+  int x = fieldValue(line, 'X', tempMax);
 
   if (g >= 0 && g <= 1023 &&
       f >= 0 && f <= 1023 &&
-      (g != gasThreshold || f != flameThreshold)) {
+      r >= 1 && r <= 30 &&
+      x >= 0 && x <= 50 &&
+      (g != gasThreshold || f != flameThreshold ||
+       r != tempRise || x != tempMax)) {
 
     gasThreshold = g;
     flameThreshold = f;
+    tempRise = r;
+    tempMax = x;
 
     saveThresholds();
 
     Serial.print(F("EEPROM yazildi G:"));
     Serial.print(gasThreshold);
     Serial.print(F(" L:"));
-    Serial.println(flameThreshold);
+    Serial.print(flameThreshold);
+    Serial.print(F(" R:"));
+    Serial.print(tempRise);
+    Serial.print(F(" X:"));
+    Serial.println(tempMax);
   }
 
   Serial.print(F("CMD alindi: "));
@@ -248,6 +311,10 @@ void setup() {
 
   loadThresholds();
 
+  for (byte i = 0; i < TEMP_HISTORY; i++) {
+    tempHistory[i] = NAN;
+  }
+
   dht.begin();
 
   lcd.init();
@@ -289,7 +356,11 @@ void setup() {
   Serial.print(F("Esikler G:"));
   Serial.print(gasThreshold);
   Serial.print(F(" L:"));
-  Serial.println(flameThreshold);
+  Serial.print(flameThreshold);
+  Serial.print(F(" R:"));
+  Serial.print(tempRise);
+  Serial.print(F(" X:"));
+  Serial.println(tempMax);
 
   lcd.clear();
   lcd.print(F("SYSTEM READY"));
@@ -334,8 +405,47 @@ void loop() {
   bool flameAlarm =
     flameValue <= flameThreshold;
 
+  // -------------------------
+  // SICAKLIK
+  //
+  // 10 saniyede bir ornek alinip 60 saniye oncekiyle karsilastiriliyor.
+  // Yanginin imzasi mutlak sicaklik degil hizli yukselis; mutlak esik
+  // tek basina yazin yanlis alarm verir, kisin gec kalir.
+  // -------------------------
+
+  if (millis() - lastTempSample >= TEMP_SAMPLE_MS) {
+
+    lastTempSample = millis();
+
+    tempHistory[tempIndex] = temperature;
+    tempIndex = (tempIndex + 1) % TEMP_HISTORY;
+
+    if (tempIndex == 0) {
+      tempHistoryFull = true;
+    }
+  }
+
+  bool tempAlarm = false;
+
+  if (!isnan(temperature)) {
+
+    if (temperature >= tempMax) {
+      tempAlarm = true;
+    }
+
+    if (tempHistoryFull) {
+
+      // tempIndex, uzerine yazilacak olan slot: yani en eski ornek.
+      float oldest = tempHistory[tempIndex];
+
+      if (!isnan(oldest) && (temperature - oldest) >= tempRise) {
+        tempAlarm = true;
+      }
+    }
+  }
+
   bool alarm =
-    gasAlarm || flameAlarm;
+    gasAlarm || flameAlarm || tempAlarm;
 
   // -------------------------
   // FAN
@@ -563,6 +673,9 @@ void loop() {
 
     Serial.print(F(" | Mute: "));
     Serial.print(remoteMute);
+
+    Serial.print(F(" | TempAlarm: "));
+    Serial.print(tempAlarm);
 
     Serial.print(F(" | Alarm: "));
     Serial.println(alarm);
