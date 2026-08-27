@@ -1,14 +1,14 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="tr">
 
 <head>
 
     <meta charset="UTF-8">
-
-    <meta name="viewport"
-          content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <title>Smart Safety System</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
     <style>
 
@@ -20,9 +20,8 @@
             text-align: center;
         }
 
-        h1 {
-            margin-bottom: 25px;
-        }
+        h1 { margin-bottom: 15px; }
+        h2 { margin-top: 30px; }
 
         .container {
             max-width: 900px;
@@ -31,17 +30,23 @@
 
         .grid {
             display: grid;
-            grid-template-columns:
-                repeat(auto-fit, minmax(200px, 1fr));
-
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
             gap: 15px;
         }
 
-        .card {
+        .card, .panel, .chartBox {
             background: white;
-            padding: 20px;
             border-radius: 12px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .card { padding: 20px; }
+
+        .card h3 {
+            margin: 0;
+            font-size: 14px;
+            color: #666;
+            font-weight: normal;
         }
 
         .value {
@@ -50,34 +55,100 @@
             margin-top: 10px;
         }
 
-        .normal {
-            color: green;
-        }
-
-        .danger {
-            color: red;
-        }
+        .normal { color: green; }
+        .danger { color: red; }
 
         #lastUpdate {
             margin: 20px;
             color: #666;
+            font-size: 14px;
+        }
+
+        .panel {
+            padding: 20px;
+            margin-top: 15px;
+        }
+
+        button {
+            font-size: 16px;
+            padding: 12px 18px;
+            border: none;
+            border-radius: 10px;
+            background: #e5e7eb;
+            color: #111827;
+            cursor: pointer;
+            margin: 4px;
+        }
+
+        button.on {
+            background: #ef4444;
+            color: white;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .hint {
+            color: #b45309;
+            font-size: 13px;
+            min-height: 18px;
+            margin-top: 8px;
+        }
+
+        .row {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+        }
+
+        input[type=number] {
+            font-size: 16px;
+            padding: 10px;
+            width: 90px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+        }
+
+        label { font-size: 14px; color: #444; }
+
+        .banner {
+            background: #fef3c7;
+            border: 1px solid #f59e0b;
+            padding: 12px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+
+        .chartBox {
+            position: relative;
+            height: 300px;
+            padding: 15px;
+        }
+
+        .tabs button { padding: 8px 14px; font-size: 14px; }
+
+        .tabs button.active {
+            background: #111827;
+            color: white;
         }
 
         table {
             width: 100%;
-            margin-top: 30px;
+            margin-top: 15px;
             border-collapse: collapse;
             background: white;
+            font-size: 13px;
         }
 
-        th, td {
-            padding: 10px;
-            border: 1px solid #ddd;
-        }
+        th, td { padding: 8px; border: 1px solid #ddd; }
+        th { background: #eee; }
 
-        th {
-            background: #eee;
-        }
+        .tableWrap { overflow-x: auto; }
 
     </style>
 
@@ -89,129 +160,372 @@
 
     <h1>Smart Safety System</h1>
 
+    <div id="tokenBanner" class="banner" style="display:none">
+        Kontrol için erişim anahtarı gerekli.
+        <button onclick="askToken()">Anahtar gir</button>
+    </div>
+
     <div class="grid">
+        <div class="card"><h3>Sıcaklık</h3><div id="temperature" class="value">--</div></div>
+        <div class="card"><h3>Nem</h3><div id="humidity" class="value">--</div></div>
+        <div class="card"><h3>Gaz</h3><div id="gas" class="value">--</div></div>
+        <div class="card"><h3>Alev</h3><div id="flame" class="value">--</div></div>
+        <div class="card"><h3>Fan</h3><div id="fan" class="value">--</div></div>
+        <div class="card"><h3>Alarm</h3><div id="alarm" class="value">--</div></div>
+    </div>
 
-        <div class="card">
-            <h3>Temperature</h3>
-            <div id="temperature" class="value">-- °C</div>
+    <div id="lastUpdate">Son güncelleme: --</div>
+
+    <h2>Kontrol</h2>
+
+    <div class="panel">
+
+        <div class="row">
+            <button id="fanBtn" onclick="toggleFan()">Fan</button>
+            <button id="muteBtn" onclick="toggleMute()">Sesi kes</button>
         </div>
 
-        <div class="card">
-            <h3>Humidity</h3>
-            <div id="humidity" class="value">-- %</div>
+        <div id="controlHint" class="hint"></div>
+
+        <div class="row" style="margin-top:15px">
+
+            <label>Gaz eşiği
+                <input id="gasThreshold" type="number" min="0" max="1023">
+            </label>
+
+            <label>Alev eşiği
+                <input id="flameThreshold" type="number" min="0" max="1023">
+            </label>
+
+            <button id="saveBtn" onclick="saveThresholds()">Kaydet</button>
+
         </div>
 
-        <div class="card">
-            <h3>Gas</h3>
-            <div id="gas" class="value">--</div>
-        </div>
-
-        <div class="card">
-            <h3>Flame</h3>
-            <div id="flame" class="value">--</div>
-        </div>
-
-        <div class="card">
-            <h3>Fan</h3>
-            <div id="fan" class="value">--</div>
-        </div>
-
-        <div class="card">
-            <h3>Alarm</h3>
-            <div id="alarm" class="value">--</div>
-        </div>
+        <div id="thresholdMsg" class="hint"></div>
 
     </div>
 
-    <div id="lastUpdate">
-        Last update: --
+    <h2>Grafik</h2>
+
+    <div class="row tabs" id="windowTabs">
+        <button data-minutes="1" onclick="setWindow(1)">1 dk</button>
+        <button data-minutes="5" onclick="setWindow(5)">5 dk</button>
+        <button data-minutes="15" onclick="setWindow(15)">15 dk</button>
+        <button data-minutes="60" onclick="setWindow(60)">1 saat</button>
     </div>
 
-    <h2>History</h2>
+    <div class="chartBox" style="margin-top:10px">
+        <canvas id="chart"></canvas>
+    </div>
 
-    <table>
+    <h2>Geçmiş</h2>
 
-        <thead>
-
-            <tr>
-                <th>Time</th>
-                <th>Temperature</th>
-                <th>Humidity</th>
-                <th>Gas</th>
-                <th>Flame</th>
-                <th>Fan</th>
-                <th>Alarm</th>
-            </tr>
-
-        </thead>
-
-        <tbody id="history">
-        </tbody>
-
-    </table>
+    <div class="tableWrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Zaman</th><th>Sıcaklık</th><th>Nem</th>
+                    <th>Gaz</th><th>Alev</th><th>Fan</th><th>Alarm</th>
+                </tr>
+            </thead>
+            <tbody id="history"></tbody>
+        </table>
+    </div>
 
 </div>
 
 
 <script>
 
+const TOKEN_KEY = "sss_token";
+
+let windowMinutes = 15;
+let chart = null;
+
+let deviceFan = null;
+let desired = null;
+
+
+function getToken() {
+    return localStorage.getItem(TOKEN_KEY) || "";
+}
+
+
+function askToken() {
+
+    const value = prompt("Erişim anahtarı (Render'daki API_TOKEN):", getToken());
+
+    if (value !== null) {
+        localStorage.setItem(TOKEN_KEY, value.trim());
+        updateTokenBanner();
+        loadCommand();
+    }
+}
+
+
+function updateTokenBanner() {
+
+    const missing = !getToken();
+
+    document.getElementById("tokenBanner").style.display = missing ? "block" : "none";
+
+    ["fanBtn", "muteBtn", "saveBtn"].forEach(id => {
+        document.getElementById(id).disabled = missing;
+    });
+}
+
+
+async function postCommand(patch) {
+
+    if (!getToken()) {
+        askToken();
+        return null;
+    }
+
+    try {
+
+        const response = await fetch("/api/command", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Auth": getToken()
+            },
+            body: JSON.stringify(patch)
+        });
+
+        if (response.status === 401) {
+            localStorage.removeItem(TOKEN_KEY);
+            updateTokenBanner();
+            alert("Anahtar geçersiz, tekrar gir.");
+            return null;
+        }
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            alert("Hata: " + (data.error || response.status));
+            return null;
+        }
+
+        await loadCommand();
+        return data;
+
+    } catch (error) {
+        console.error(error);
+        alert("Sunucuya ulaşılamadı.");
+        return null;
+    }
+}
+
+
+async function loadCommand() {
+
+    try {
+
+        const data = await (await fetch("/api/command")).json();
+
+        if (data.error) return;
+
+        desired = data;
+
+        const fanBtn = document.getElementById("fanBtn");
+        fanBtn.className = data.fan ? "on" : "";
+        fanBtn.innerText = data.fan ? "Fan: AÇIK" : "Fan: KAPALI";
+
+        const muteBtn = document.getElementById("muteBtn");
+        muteBtn.className = data.mute ? "on" : "";
+        muteBtn.innerText = data.mute ? "Ses: KAPALI" : "Sesi kes";
+
+        const gasInput = document.getElementById("gasThreshold");
+        const flameInput = document.getElementById("flameThreshold");
+
+        if (document.activeElement !== gasInput) gasInput.value = data.gas_threshold;
+        if (document.activeElement !== flameInput) flameInput.value = data.flame_threshold;
+
+        updateHint();
+
+    } catch (error) {
+        console.error(error);
+    }
+}
+
+
+function updateHint() {
+
+    // Komut cihaza ~5 saniyede iniyor. Iyimser gosterim yok:
+    // istenen ile cihazin bildirdigi ayni olana kadar "bekliyor".
+    const box = document.getElementById("controlHint");
+
+    if (desired === null || deviceFan === null) {
+        box.innerText = "";
+        return;
+    }
+
+    box.innerText =
+        (Boolean(desired.fan) && !deviceFan)
+            ? "Fan komutu cihaza gönderiliyor..."
+            : "";
+}
+
+
+function toggleFan() {
+    postCommand({ fan: desired && desired.fan ? 0 : 1 });
+}
+
+
+function toggleMute() {
+    postCommand({ mute: desired && desired.mute ? 0 : 1 });
+}
+
+
+async function saveThresholds() {
+
+    const message = document.getElementById("thresholdMsg");
+
+    const result = await postCommand({
+        gas_threshold: Number(document.getElementById("gasThreshold").value),
+        flame_threshold: Number(document.getElementById("flameThreshold").value)
+    });
+
+    if (result) {
+        message.innerText = "Kaydedildi, cihaza iniyor...";
+        setTimeout(() => { message.innerText = ""; }, 4000);
+    }
+}
+
+
+const show = (value, suffix) =>
+    (value === null || value === undefined) ? "--" : value + suffix;
+
+
 async function loadLatest() {
 
     try {
 
-        const response =
-            await fetch("/api/latest");
+        const data = await (await fetch("/api/latest")).json();
 
-        const data =
-            await response.json();
+        if (!data || !data.id) return;
 
-        if (!data || !data.id) {
-            return;
-        }
+        document.getElementById("temperature").innerText = show(data.temperature, " °C");
+        document.getElementById("humidity").innerText = show(data.humidity, " %");
+        document.getElementById("gas").innerText = show(data.gas, "");
+        document.getElementById("flame").innerText = show(data.flame, "");
 
-        document.getElementById("temperature")
-            .innerText =
-            data.temperature + " °C";
+        deviceFan = Boolean(data.fan);
 
-        document.getElementById("humidity")
-            .innerText =
-            data.humidity + " %";
+        document.getElementById("fan").innerText = data.fan ? "AÇIK" : "KAPALI";
 
-        document.getElementById("gas")
-            .innerText =
-            data.gas;
+        const alarmBox = document.getElementById("alarm");
+        alarmBox.innerText = data.alarm ? "ALARM" : "NORMAL";
+        alarmBox.className = data.alarm ? "value danger" : "value normal";
 
-        document.getElementById("flame")
-            .innerText =
-            data.flame;
+        document.getElementById("lastUpdate").innerText =
+            "Son güncelleme: " + new Date(data.created_at).toLocaleString();
 
-        document.getElementById("fan")
-            .innerText =
-            data.fan ? "ON" : "OFF";
+        updateHint();
 
-        document.getElementById("alarm")
-            .innerText =
-            data.alarm ? "ACTIVE" : "NORMAL";
-
-        document.getElementById("alarm")
-            .className =
-            data.alarm
-                ? "value danger"
-                : "value normal";
-
-        document.getElementById("lastUpdate")
-            .innerText =
-            "Last update: " +
-            new Date(data.created_at)
-                .toLocaleString();
-
-    }
-
-    catch (error) {
-
+    } catch (error) {
         console.error(error);
-
     }
+}
+
+
+function setWindow(minutes) {
+
+    windowMinutes = minutes;
+
+    document.querySelectorAll("#windowTabs button").forEach(button => {
+        button.className = Number(button.dataset.minutes) === minutes ? "active" : "";
+    });
+
+    loadHistory();
+}
+
+
+function drawChart(rows) {
+
+    if (typeof Chart === "undefined") return;
+
+    const labels = rows.map(row => new Date(row.created_at).toLocaleTimeString());
+    const series = key => rows.map(row => row[key]);
+
+    const datasets = [
+        { label: "Sıcaklık", data: series("temperature"), borderColor: "#ef4444", yAxisID: "y" },
+        { label: "Nem", data: series("humidity"), borderColor: "#3b82f6", yAxisID: "y" },
+        { label: "Gaz", data: series("gas"), borderColor: "#f59e0b", yAxisID: "y1" },
+        { label: "Alev", data: series("flame"), borderColor: "#10b981", yAxisID: "y1" }
+    ];
+
+    datasets.forEach(set => {
+        set.borderWidth = 2;
+        set.tension = 0.25;
+        set.spanGaps = true;
+    });
+
+    if (chart) {
+        chart.data.labels = labels;
+        chart.data.datasets.forEach((set, i) => { set.data = datasets[i].data; });
+        chart.update("none");
+        return;
+    }
+
+    // Sicaklik/nem 0-100, gaz/alev 0-1023. Tek eksende sicaklik gorunmez olur.
+    const scales = {
+        y: { position: "left", suggestedMin: 0, suggestedMax: 100 },
+        y1: {
+            position: "right",
+            suggestedMin: 0,
+            suggestedMax: 1023,
+            grid: { drawOnChartArea: false }
+        },
+        x: { ticks: { maxTicksLimit: 6 } }
+    };
+
+    chart = new Chart(document.getElementById("chart"), {
+        type: "line",
+        data: { labels: labels, datasets: datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            elements: { point: { radius: 0 } },
+            interaction: { mode: "index", intersect: false },
+            scales: scales
+        }
+    });
+
+    // Grafik, sayfa yerlesimi tamamlanmadan olusabiliyor; o anda kapsayici
+    // 0 genislikte olculuyor ve Chart.js'in ResizeObserver'i boyut
+    // "degismedigi" icin bir daha tetiklenmiyor -- grafik hic gorunmuyor.
+    // Yerlesim kesinlestikten sonra bir kez daha olcturuyoruz.
+    chart.resize();
+    requestAnimationFrame(() => chart.resize());
+}
+
+
+function fillTable(rows) {
+
+    const table = document.getElementById("history");
+
+    table.innerHTML = "";
+
+    const cell = value => (value === null || value === undefined) ? "--" : value;
+
+    rows.slice().reverse().slice(0, 50).forEach(row => {
+
+        const tr = document.createElement("tr");
+
+        tr.innerHTML =
+            "<td>" + new Date(row.created_at).toLocaleTimeString() + "</td>" +
+            "<td>" + cell(row.temperature) + "</td>" +
+            "<td>" + cell(row.humidity) + "</td>" +
+            "<td>" + cell(row.gas) + "</td>" +
+            "<td>" + cell(row.flame) + "</td>" +
+            "<td>" + (row.fan ? "AÇIK" : "KAPALI") + "</td>" +
+            "<td>" + (row.alarm ? "ALARM" : "NORMAL") + "</td>";
+
+        table.appendChild(tr);
+    });
 }
 
 
@@ -219,80 +533,30 @@ async function loadHistory() {
 
     try {
 
-        const response =
-            await fetch("/api/history");
+        const rows = await (await fetch("/api/history?minutes=" + windowMinutes)).json();
 
-        const data =
-            await response.json();
+        if (!Array.isArray(rows)) return;
 
-        const table =
-            document.getElementById("history");
+        drawChart(rows);
+        fillTable(rows);
 
-        table.innerHTML = "";
-
-        data.forEach(row => {
-
-            const tr =
-                document.createElement("tr");
-
-            tr.innerHTML = `
-
-                <td>
-                    ${new Date(row.created_at)
-                        .toLocaleString()}
-                </td>
-
-                <td>
-                    ${row.temperature} °C
-                </td>
-
-                <td>
-                    ${row.humidity} %
-                </td>
-
-                <td>
-                    ${row.gas}
-                </td>
-
-                <td>
-                    ${row.flame}
-                </td>
-
-                <td>
-                    ${row.fan ? "ON" : "OFF"}
-                </td>
-
-                <td>
-                    ${row.alarm ? "ACTIVE" : "NORMAL"}
-                </td>
-
-            `;
-
-            table.appendChild(tr);
-
-        });
-
-    }
-
-    catch (error) {
-
+    } catch (error) {
         console.error(error);
-
     }
 }
 
 
 function refresh() {
-
     loadLatest();
-    loadHistory();
-
+    loadCommand();
 }
 
-
+updateTokenBanner();
+setWindow(15);
 refresh();
 
 setInterval(refresh, 3000);
+setInterval(loadHistory, 10000);
 
 </script>
 
