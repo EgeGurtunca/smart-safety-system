@@ -69,10 +69,9 @@ bool ledState = HIGH;
 // =================================================
 // LOG
 //
-// Sadece USB seri porta yaziyor. Eskiden log RAM'de
-// birikip yerel web sayfasinda gosteriliyordu; o sayfa
-// kaldirildi cunku HTTPS el sikismasi tek basina ~20 KB
-// heap istiyor ve biriken String'ler heap'i parcaliyordu.
+// Log sadece USB seri porta gidiyor, RAM'de biriktirilmiyor.
+// HTTPS el sikismasi tek basina ~20 KB heap istiyor; birikip
+// duran String'ler heap'i parcalayip baglantiyi dusuruyor.
 // =================================================
 
 void addLog(String text) {
@@ -301,6 +300,19 @@ void sendCommandToArduino() {
     ",H" + String(cmdHumHigh) +
     ",W" + String(cmdHumLow);
 
+  // XOR sagalamasi. Arduino'nun SoftwareSerial'i gonderirken alamiyor;
+  // cakisma olursa satir bozuluyor ya da iki komut birbirine yapisiyor.
+  // Sagalama tutmazsa Arduino satiri atiyor.
+  byte sum = 0;
+
+  for (unsigned int i = 1; i < line.length(); i++) {
+    sum ^= (byte)line[i];
+  }
+
+  char tail[5];
+  sprintf(tail, "*%02X", sum);
+  line += tail;
+
   arduinoSerial.println(line);
 
   addLog("CMD -> " + line);
@@ -446,7 +458,7 @@ void setup() {
   //
   // Varsayilan 64 baytlik tampon yetmiyor: sendToServer() TLS el
   // sikismasi icin 1-3 saniye bloklarken Arduino saniyede bir ~45
-  // baytlik satir gonderiyor. Ikinci satirda tasip veriyi bozuyordu.
+  // baytlik satir gonderiyor, ikinci satirda tampon tasiyor.
   arduinoSerial.begin(9600, SWSERIAL_8N1, D7, D6, false, 256);
 
   // Satir sonu gelmezse 1 saniye kilitlenmesin.

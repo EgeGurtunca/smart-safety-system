@@ -225,8 +225,9 @@ class MonitorService : Service() {
             )
         }
 
-        // Alarm kanalindan ayri ve daha sakin: gece bir WiFi kesintisi
-        // seni alarm sesiyle uyandirmasin, ama gormeden de gecme.
+        // Alarm kanalindan ayri ve daha sakin: gece yasanan bir WiFi
+        // kesintisi alarm sesiyle uyandirmasin, ama fark edilmeden de
+        // gecmesin.
         val offline = NotificationChannel(
             CHANNEL_OFFLINE,
             "Bağlantı",

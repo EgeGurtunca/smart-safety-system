@@ -47,20 +47,20 @@
 // Nem uyari sinirlari. Alarm DEGIL: fan, buzzer ve role etkilenmez,
 // sadece LCD'de donusumlu gosterilir.
 //
-// DHT11 nemi 20-90% RH araliginda olcuyor. Eskiden 95/5 yaziyordu ve
-// sensor o degerleri hic raporlayamadigi icin uyari hicbir zaman
-// tetiklenmiyordu. Varsayilanlar aralik icinde, uzaktan ayarlanabilir.
+// DHT11 nemi 20-90% RH araliginda olcuyor. Bu araligin disinda kalan
+// bir sinir sensorden hic gelmeyecegi icin uyariyi olu birakir; bu
+// yuzden varsayilanlar aralik icinde. Uzaktan ayarlanabilir.
 #define HUMIDITY_HIGH_DEFAULT 80
 #define HUMIDITY_LOW_DEFAULT 25
 #define SCREEN_SWAP_MS 2000
 
 // EEPROM: esikler elektrik kesintisinde kaybolmasin.
 //
-// Sihirli sayi 2 bayt: tek baytlik bir imza kartta kalmis eski veriyle
-// tesadufen eslesip cop degerleri gecerli sanmaya yol aciyordu.
-// Sicaklik esikleri eklenince duzen degisti; magic'i artirmak eski
-// kartlardaki yarim veriyi otomatik sifirlar.
-#define EEPROM_MAGIC 0xA55C
+// Sihirli sayi 2 bayt: tek baytlik bir imzanin kartta kalmis rastgele
+// bir bayta denk gelme ihtimali yuksek, o durumda cop degerler gecerli
+// sanilir. Kayit duzeni degistiginde magic artiriliyor; boylece eski
+// karttaki yarim veri ilk aciliste kendiliginden sifirlanir.
+#define EEPROM_MAGIC 0xA55D
 #define EEPROM_ADDR_MAGIC 0
 #define EEPROM_ADDR_GAS 2
 #define EEPROM_ADDR_FLAME 4
@@ -74,9 +74,9 @@
 #define EEPROM_ADDR_HUM_LOW_DEF 24
 
 // Son damgalamada gecerli olan derleme varsayilanlari da saklaniyor.
-// Kodda varsayilani degistirip yuklersen EEPROM'daki eski deger degil
-// senin yazdigin deger kazanir -- yoksa "#define'i degistirdim ama
-// hicbir sey olmuyor" tuzagina dusuluyor.
+// Kodda varsayilan degistirilip kart yeniden yuklendiginde EEPROM'daki
+// eski deger degil derlenen deger kazansin diye: aksi halde #define
+// degisikligi calisan sisteme hicbir zaman yansimaz.
 #define EEPROM_ADDR_GAS_DEF 6
 #define EEPROM_ADDR_FLAME_DEF 8
 
@@ -119,7 +119,7 @@ unsigned long lastScreenSwap = 0;
 // LCD nem uyari ekranini mi gosteriyor?
 bool showHumidityScreen = false;
 
-// Buzzer su an calıyor mu? tone() gereksiz yere tekrar cagrilmasin.
+// Buzzer su an caliyor mu? tone() gereksiz yere tekrar cagrilmasin.
 bool buzzerOn = false;
 
 // NodeMCU'dan gelen komut satiri. Uno'da RAM kisitli:
@@ -246,15 +246,57 @@ void loadThresholds() {
 // KOMUT: #F1,M0,G400,L80,R5,X45,H80,W25
 // -------------------------
 
-int fieldValue(const char *line, char key, int fallback) {
+// Anahtar yoksa ya da ardindan rakam gelmiyorsa bu deger doner.
+// Mevcut degere sessizce dusmek, kesilmis bir satirin yarim
+// uygulanmasi anlamina gelir.
+#define FIELD_MISSING -32000
+
+int fieldValue(const char *line, char key) {
 
   const char *p = strchr(line, key);
 
   if (!p) {
-    return fallback;
+    return FIELD_MISSING;
   }
 
-  return atoi(p + 1);
+  p++;
+
+  if (*p == '-' || *p == '+') {
+    p++;
+  }
+
+  if (!isdigit((unsigned char)*p)) {
+    return FIELD_MISSING;
+  }
+
+  return atoi(strchr(line, key) + 1);
+}
+
+/**
+ * XOR sagalamasi: '#' ile '*' arasindaki karakterlerin XOR'u.
+ *
+ * SoftwareSerial yari cift yonlu -- Arduino nodeSerial.print() ile
+ * veri gonderirken (saniyede bir, kesmeler kapali) ayni anda alamiyor.
+ * Komut tam o pencerede gelirse baytlar kayboluyor, satir sonu da
+ * kaybolunca iki komut birbirine yapisiyor. Bozuk satiri uygulamak
+ * cihaza sacma esik yazar; sagalama tutmuyorsa satiri atiyoruz.
+ * NodeMCU 5 saniyede bir tekrar gonderiyor, kayip sorun degil.
+ */
+bool checksumOk(const char *line) {
+
+  const char *star = strrchr(line, '*');
+
+  if (!star || star == line) {
+    return false;
+  }
+
+  byte sum = 0;
+
+  for (const char *p = line + 1; p < star; p++) {
+    sum ^= (byte)(*p);
+  }
+
+  return (byte)strtol(star + 1, NULL, 16) == sum;
 }
 
 void applyCommand(const char *line) {
@@ -263,15 +305,35 @@ void applyCommand(const char *line) {
     return;
   }
 
-  remoteFan = fieldValue(line, 'F', 0) != 0;
-  remoteMute = fieldValue(line, 'M', 0) != 0;
+  if (!checksumOk(line)) {
+    Serial.print(F("CMD BOZUK, atlandi: "));
+    Serial.println(line);
+    return;
+  }
 
-  int g = fieldValue(line, 'G', gasThreshold);
-  int f = fieldValue(line, 'L', flameThreshold);
-  int r = fieldValue(line, 'R', tempRise);
-  int x = fieldValue(line, 'X', tempMax);
-  int hh = fieldValue(line, 'H', humidityHigh);
-  int hl = fieldValue(line, 'W', humidityLow);
+  int fanValue = fieldValue(line, 'F');
+  int muteValue = fieldValue(line, 'M');
+
+  int g = fieldValue(line, 'G');
+  int f = fieldValue(line, 'L');
+  int r = fieldValue(line, 'R');
+  int x = fieldValue(line, 'X');
+  int hh = fieldValue(line, 'H');
+  int hl = fieldValue(line, 'W');
+
+  // Sekiz alanin biri bile eksikse satir kesilmis demektir.
+  if (fanValue == FIELD_MISSING || muteValue == FIELD_MISSING ||
+      g == FIELD_MISSING || f == FIELD_MISSING ||
+      r == FIELD_MISSING || x == FIELD_MISSING ||
+      hh == FIELD_MISSING || hl == FIELD_MISSING) {
+
+    Serial.print(F("CMD EKSIK ALAN, atlandi: "));
+    Serial.println(line);
+    return;
+  }
+
+  remoteFan = fanValue != 0;
+  remoteMute = muteValue != 0;
 
   if (g >= 0 && g <= 1023 &&
       f >= 0 && f <= 1023 &&
