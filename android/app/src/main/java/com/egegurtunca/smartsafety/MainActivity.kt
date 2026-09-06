@@ -50,8 +50,10 @@ private val DANGER = Color(0xFFEF4444)
 private val SAFE = Color(0xFF10B981)
 private val WARN = Color(0xFFF59E0B)
 
-private const val HUMIDITY_HIGH = 95.0
-private const val HUMIDITY_LOW = 5.0
+// Nem uyari sinirlari sunucudan geliyor; bunlar sadece sunucu
+// okunamadiginda kullanilan yedek degerler.
+private const val HUMIDITY_HIGH_FALLBACK = 80.0
+private const val HUMIDITY_LOW_FALLBACK = 25.0
 
 class MainActivity : ComponentActivity() {
 
@@ -106,6 +108,8 @@ fun AppScreen() {
     var flameField by remember { mutableStateOf("") }
     var riseField by remember { mutableStateOf("") }
     var maxField by remember { mutableStateOf("") }
+    var humHighField by remember { mutableStateOf("") }
+    var humLowField by remember { mutableStateOf("") }
     var fieldsFilled by remember { mutableStateOf(false) }
 
     // Canli degerler ve komut durumu
@@ -137,6 +141,8 @@ fun AppScreen() {
                         flameField = it.flameThreshold.toString()
                         riseField = it.tempRise.toString()
                         maxField = it.tempMax.toString()
+                        humHighField = it.humidityHigh.toString()
+                        humLowField = it.humidityLow.toString()
                         fieldsFilled = true
                     }
                 }
@@ -208,26 +214,42 @@ fun AppScreen() {
         // Canli degerler
         // -------------------------------------------------------------
 
-        val alarmOn = reading?.alarm == true
+        val stale = reading?.stale == true
+        val alarmOn = reading?.alarm == true && !stale
 
         Card(
             colors = CardDefaults.cardColors(
-                containerColor =
-                    if (alarmOn) DANGER.copy(alpha = 0.25f)
-                    else MaterialTheme.colorScheme.surfaceVariant
+                containerColor = when {
+                    stale -> WARN.copy(alpha = 0.25f)
+                    alarmOn -> DANGER.copy(alpha = 0.25f)
+                    else -> MaterialTheme.colorScheme.surfaceVariant
+                }
             )
         ) {
             Column(Modifier.padding(16.dp)) {
 
+                // Veri bayatsa alarm durumu artik gecerli degil:
+                // "NORMAL" yazmak olu sistemi guvenli gostermek olur.
                 Text(
-                    text = if (alarmOn) "ALARM" else "NORMAL",
+                    text = when {
+                        stale -> "VERİ AKIŞI DURDU"
+                        alarmOn -> "ALARM"
+                        else -> "NORMAL"
+                    },
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
-                    color = if (alarmOn) DANGER else SAFE
+                    color = when {
+                        stale -> WARN
+                        alarmOn -> DANGER
+                        else -> SAFE
+                    }
                 )
 
                 Text(
-                    text = "Fan: " + if (reading?.fan == true) "AÇIK" else "KAPALI",
+                    text =
+                        if (stale) "Son kayıt " + ageText(reading?.ageSeconds) +
+                            " — gösterilen değerler güncel değil"
+                        else "Fan: " + if (reading?.fan == true) "AÇIK" else "KAPALI",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
@@ -254,7 +276,7 @@ fun AppScreen() {
                 "Nem",
                 reading?.humidity?.let { String.format("%.0f %%", it) },
                 Modifier.weight(1f),
-                note = humidityNote(reading?.humidity)
+                note = humidityNote(reading?.humidity, command)
             )
         }
 
@@ -363,6 +385,30 @@ fun AppScreen() {
                     )
                 }
 
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+
+                    OutlinedTextField(
+                        value = humHighField,
+                        onValueChange = { humHighField = it },
+                        label = { Text("Nem üst %") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    OutlinedTextField(
+                        value = humLowField,
+                        onValueChange = { humLowField = it },
+                        label = { Text("Nem alt %") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
                 Button(
                     onClick = {
                         val gas = gasField.toIntOrNull()
@@ -382,6 +428,17 @@ fun AppScreen() {
                             message =
                                 "Isınma ${Api.TEMP_RISE_MIN}-${Api.TEMP_RISE_MAX} °C/dk olmalı"
 
+                        } else if (
+                            humHighField.toIntOrNull() == null ||
+                            humLowField.toIntOrNull() == null ||
+                            humHighField.toInt() !in (Api.HUMIDITY_MIN + 1)..Api.HUMIDITY_MAX ||
+                            humLowField.toInt() !in Api.HUMIDITY_MIN..(Api.HUMIDITY_MAX - 1) ||
+                            humHighField.toInt() <= humLowField.toInt()
+                        ) {
+                            // DHT11 20-90% disini olcemiyor; ust > alt olmali.
+                            message =
+                                "Nem sınırları ${Api.HUMIDITY_MIN}-${Api.HUMIDITY_MAX} arasında ve üst > alt olmalı"
+
                         } else if (ceiling == null || ceiling !in 0..Api.TEMP_MAX_LIMIT) {
                             // DHT11 50 C ustunu olcemiyor; daha yuksek tavan hic tetiklenmez.
                             message = "Sıcaklık tavanı 0-${Api.TEMP_MAX_LIMIT} °C olmalı"
@@ -392,7 +449,9 @@ fun AppScreen() {
                                     .put("gas_threshold", gas)
                                     .put("flame_threshold", flame)
                                     .put("temp_rise", rise)
-                                    .put("temp_max", ceiling),
+                                    .put("temp_max", ceiling)
+                                    .put("humidity_high", humHighField.toInt())
+                                    .put("humidity_low", humLowField.toInt()),
                                 "Eşikler kaydedildi"
                             )
                         }
@@ -522,12 +581,32 @@ private fun ValueCard(
 }
 
 
+/** "3 dk once" gibi okunabilir yas. */
+private fun ageText(seconds: Int?): String {
+
+    if (seconds == null) return "zamanı bilinmiyor"
+
+    return when {
+        seconds < 90 -> "$seconds sn önce"
+        seconds < 5400 -> "${seconds / 60} dk önce"
+        else -> "${seconds / 3600} saat önce"
+    }
+}
+
+
 /** Nem uyarisi. Alarm degil: fan, buzzer ve bildirim tetiklenmez. */
-private fun humidityNote(humidity: Double?): String? = when {
-    humidity == null -> null
-    humidity >= HUMIDITY_HIGH -> "ÇOK NEMLİ"
-    humidity <= HUMIDITY_LOW -> "ÇOK KURU"
-    else -> null
+private fun humidityNote(humidity: Double?, command: Command?): String? {
+
+    if (humidity == null) return null
+
+    val high = command?.humidityHigh?.toDouble() ?: HUMIDITY_HIGH_FALLBACK
+    val low = command?.humidityLow?.toDouble() ?: HUMIDITY_LOW_FALLBACK
+
+    return when {
+        humidity >= high -> "ÇOK NEMLİ"
+        humidity <= low -> "ÇOK KURU"
+        else -> null
+    }
 }
 
 

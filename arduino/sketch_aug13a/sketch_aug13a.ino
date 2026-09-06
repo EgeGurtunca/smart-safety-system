@@ -46,8 +46,12 @@
 
 // Nem uyari sinirlari. Alarm DEGIL: fan, buzzer ve role etkilenmez,
 // sadece LCD'de donusumlu gosterilir.
-#define HUMIDITY_HIGH 95
-#define HUMIDITY_LOW 5
+//
+// DHT11 nemi 20-90% RH araliginda olcuyor. Eskiden 95/5 yaziyordu ve
+// sensor o degerleri hic raporlayamadigi icin uyari hicbir zaman
+// tetiklenmiyordu. Varsayilanlar aralik icinde, uzaktan ayarlanabilir.
+#define HUMIDITY_HIGH_DEFAULT 80
+#define HUMIDITY_LOW_DEFAULT 25
 #define SCREEN_SWAP_MS 2000
 
 // EEPROM: esikler elektrik kesintisinde kaybolmasin.
@@ -56,7 +60,7 @@
 // tesadufen eslesip cop degerleri gecerli sanmaya yol aciyordu.
 // Sicaklik esikleri eklenince duzen degisti; magic'i artirmak eski
 // kartlardaki yarim veriyi otomatik sifirlar.
-#define EEPROM_MAGIC 0xA55B
+#define EEPROM_MAGIC 0xA55C
 #define EEPROM_ADDR_MAGIC 0
 #define EEPROM_ADDR_GAS 2
 #define EEPROM_ADDR_FLAME 4
@@ -64,6 +68,10 @@
 #define EEPROM_ADDR_TEMP_MAX 12
 #define EEPROM_ADDR_TEMP_RISE_DEF 14
 #define EEPROM_ADDR_TEMP_MAX_DEF 16
+#define EEPROM_ADDR_HUM_HIGH 18
+#define EEPROM_ADDR_HUM_LOW 20
+#define EEPROM_ADDR_HUM_HIGH_DEF 22
+#define EEPROM_ADDR_HUM_LOW_DEF 24
 
 // Son damgalamada gecerli olan derleme varsayilanlari da saklaniyor.
 // Kodda varsayilani degistirip yuklersen EEPROM'daki eski deger degil
@@ -87,6 +95,8 @@ int gasThreshold = GAS_THRESHOLD_DEFAULT;
 int flameThreshold = FLAME_THRESHOLD_DEFAULT;
 int tempRise = TEMP_RISE_DEFAULT;
 int tempMax = TEMP_MAX_DEFAULT;
+int humidityHigh = HUMIDITY_HIGH_DEFAULT;
+int humidityLow = HUMIDITY_LOW_DEFAULT;
 
 // Sicaklik gecmisi: 10 saniyede bir ornek, 60 saniye once ile karsilastirilir.
 float tempHistory[TEMP_HISTORY];
@@ -109,9 +119,12 @@ unsigned long lastScreenSwap = 0;
 // LCD nem uyari ekranini mi gosteriyor?
 bool showHumidityScreen = false;
 
+// Buzzer su an calıyor mu? tone() gereksiz yere tekrar cagrilmasin.
+bool buzzerOn = false;
+
 // NodeMCU'dan gelen komut satiri. Uno'da RAM kisitli:
 // SD + LCD + DHT + SoftwareSerial zaten yer yiyor, String kullanilmiyor.
-char cmdBuf[32];
+char cmdBuf[48];
 byte cmdLen = 0;
 
 
@@ -130,17 +143,23 @@ void saveThresholds() {
   // deger degistiginde cagriliyor (~100k yazim omru).
   int riseDefault = TEMP_RISE_DEFAULT;
   int maxDefault = TEMP_MAX_DEFAULT;
+  int humHighDefault = HUMIDITY_HIGH_DEFAULT;
+  int humLowDefault = HUMIDITY_LOW_DEFAULT;
 
   EEPROM.put(EEPROM_ADDR_MAGIC, magic);
   EEPROM.put(EEPROM_ADDR_GAS, gasThreshold);
   EEPROM.put(EEPROM_ADDR_FLAME, flameThreshold);
   EEPROM.put(EEPROM_ADDR_TEMP_RISE, tempRise);
   EEPROM.put(EEPROM_ADDR_TEMP_MAX, tempMax);
+  EEPROM.put(EEPROM_ADDR_HUM_HIGH, humidityHigh);
+  EEPROM.put(EEPROM_ADDR_HUM_LOW, humidityLow);
 
   EEPROM.put(EEPROM_ADDR_GAS_DEF, gasDefault);
   EEPROM.put(EEPROM_ADDR_FLAME_DEF, flameDefault);
   EEPROM.put(EEPROM_ADDR_TEMP_RISE_DEF, riseDefault);
   EEPROM.put(EEPROM_ADDR_TEMP_MAX_DEF, maxDefault);
+  EEPROM.put(EEPROM_ADDR_HUM_HIGH_DEF, humHighDefault);
+  EEPROM.put(EEPROM_ADDR_HUM_LOW_DEF, humLowDefault);
 }
 
 void loadThresholds() {
@@ -159,16 +178,22 @@ void loadThresholds() {
   int flameDefault;
   int riseDefault;
   int maxDefault;
+  int humHighDefault;
+  int humLowDefault;
 
   EEPROM.get(EEPROM_ADDR_GAS_DEF, gasDefault);
   EEPROM.get(EEPROM_ADDR_FLAME_DEF, flameDefault);
   EEPROM.get(EEPROM_ADDR_TEMP_RISE_DEF, riseDefault);
   EEPROM.get(EEPROM_ADDR_TEMP_MAX_DEF, maxDefault);
+  EEPROM.get(EEPROM_ADDR_HUM_HIGH_DEF, humHighDefault);
+  EEPROM.get(EEPROM_ADDR_HUM_LOW_DEF, humLowDefault);
 
   if (gasDefault != GAS_THRESHOLD_DEFAULT ||
       flameDefault != FLAME_THRESHOLD_DEFAULT ||
       riseDefault != TEMP_RISE_DEFAULT ||
-      maxDefault != TEMP_MAX_DEFAULT) {
+      maxDefault != TEMP_MAX_DEFAULT ||
+      humHighDefault != HUMIDITY_HIGH_DEFAULT ||
+      humLowDefault != HUMIDITY_LOW_DEFAULT) {
 
     // Kodda varsayilan degistirilmis: derlenen deger kazanir,
     // EEPROM'daki eski deger uzerine yazilir.
@@ -182,11 +207,15 @@ void loadThresholds() {
   int f;
   int r;
   int m;
+  int hh;
+  int hl;
 
   EEPROM.get(EEPROM_ADDR_GAS, g);
   EEPROM.get(EEPROM_ADDR_FLAME, f);
   EEPROM.get(EEPROM_ADDR_TEMP_RISE, r);
   EEPROM.get(EEPROM_ADDR_TEMP_MAX, m);
+  EEPROM.get(EEPROM_ADDR_HUM_HIGH, hh);
+  EEPROM.get(EEPROM_ADDR_HUM_LOW, hl);
 
   // Cop deger okunursa varsayilanda kal.
   if (g >= 0 && g <= 1023) {
@@ -204,11 +233,17 @@ void loadThresholds() {
   if (m >= 0 && m <= 50) {
     tempMax = m;
   }
+
+  // DHT11 araligi disinda bir esik uyariyi olu birakir.
+  if (hh >= 20 && hh <= 90 && hl >= 20 && hl <= 90 && hh > hl) {
+    humidityHigh = hh;
+    humidityLow = hl;
+  }
 }
 
 
 // -------------------------
-// KOMUT: #F1,M0,G400,L80
+// KOMUT: #F1,M0,G400,L80,R5,X45,H80,W25
 // -------------------------
 
 int fieldValue(const char *line, char key, int fallback) {
@@ -235,18 +270,24 @@ void applyCommand(const char *line) {
   int f = fieldValue(line, 'L', flameThreshold);
   int r = fieldValue(line, 'R', tempRise);
   int x = fieldValue(line, 'X', tempMax);
+  int hh = fieldValue(line, 'H', humidityHigh);
+  int hl = fieldValue(line, 'W', humidityLow);
 
   if (g >= 0 && g <= 1023 &&
       f >= 0 && f <= 1023 &&
       r >= 1 && r <= 30 &&
       x >= 0 && x <= 50 &&
+      hh >= 20 && hh <= 90 && hl >= 20 && hl <= 90 && hh > hl &&
       (g != gasThreshold || f != flameThreshold ||
-       r != tempRise || x != tempMax)) {
+       r != tempRise || x != tempMax ||
+       hh != humidityHigh || hl != humidityLow)) {
 
     gasThreshold = g;
     flameThreshold = f;
     tempRise = r;
     tempMax = x;
+    humidityHigh = hh;
+    humidityLow = hl;
 
     saveThresholds();
 
@@ -257,7 +298,11 @@ void applyCommand(const char *line) {
     Serial.print(F(" R:"));
     Serial.print(tempRise);
     Serial.print(F(" X:"));
-    Serial.println(tempMax);
+    Serial.print(tempMax);
+    Serial.print(F(" H:"));
+    Serial.print(humidityHigh);
+    Serial.print(F(" W:"));
+    Serial.println(humidityLow);
   }
 
   Serial.print(F("CMD alindi: "));
@@ -360,7 +405,11 @@ void setup() {
   Serial.print(F(" R:"));
   Serial.print(tempRise);
   Serial.print(F(" X:"));
-  Serial.println(tempMax);
+  Serial.print(tempMax);
+  Serial.print(F(" H:"));
+  Serial.print(humidityHigh);
+  Serial.print(F(" W:"));
+  Serial.println(humidityLow);
 
   lcd.clear();
   lcd.print(F("SYSTEM READY"));
@@ -479,10 +528,22 @@ void loop() {
   // -------------------------
 
   // Susturma sadece sesi keser; fan ve LED calismaya devam eder.
-  if (alarm && !remoteMute) {
-    tone(BUZZER_PIN, 1000);
-  } else {
-    noTone(BUZZER_PIN);
+  //
+  // tone() her cagrildiginda Timer2'yi bastan kuruyor. Dongu saniyede
+  // binlerce kez dondugu icin surekli cagrilirsa dalga formu hic
+  // tamamlanamaz ve buzzer ya hic otmez ya cilizca oter. Bu yuzden
+  // sadece durum degistiginde cagriliyor.
+  bool wantBuzzer = alarm && !remoteMute;
+
+  if (wantBuzzer != buzzerOn) {
+
+    buzzerOn = wantBuzzer;
+
+    if (buzzerOn) {
+      tone(BUZZER_PIN, 1000);
+    } else {
+      noTone(BUZZER_PIN);
+    }
   }
 
   // -------------------------
@@ -494,7 +555,7 @@ void loop() {
   // o anda ekranda sensor degerleri durmali.
   bool humidityWarn =
     !isnan(humidity) &&
-    (humidity >= HUMIDITY_HIGH || humidity <= HUMIDITY_LOW);
+    (humidity >= humidityHigh || humidity <= humidityLow);
 
   if (!humidityWarn || alarm) {
 
@@ -522,7 +583,7 @@ void loop() {
       lcd.print(F("%"));
       lcd.print(humidity, 0);
 
-      if (humidity >= HUMIDITY_HIGH) {
+      if (humidity >= humidityHigh) {
         lcd.print(F(" COK NEMLI"));
       } else {
         lcd.print(F(" COK KURU"));

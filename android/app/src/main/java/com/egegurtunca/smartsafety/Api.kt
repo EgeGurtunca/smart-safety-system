@@ -12,6 +12,10 @@ import java.time.ZoneOffset
 
 data class Reading(
     val timeMillis: Long,
+    /** Kaydin yasi, sunucunun saatiyle. null = olculemedi. */
+    val ageSeconds: Int?,
+    /** Sunucu bayat mi diyor? Cihaz susmus olabilir. */
+    val stale: Boolean,
     val temperature: Double?,
     val humidity: Double?,
     val gas: Int?,
@@ -26,7 +30,9 @@ data class Command(
     val gasThreshold: Int,
     val flameThreshold: Int,
     val tempRise: Int,
-    val tempMax: Int
+    val tempMax: Int,
+    val humidityHigh: Int,
+    val humidityLow: Int
 )
 
 sealed class ApiResult<out T> {
@@ -45,6 +51,10 @@ object Api {
     const val TEMP_MAX_LIMIT = 50
     const val TEMP_RISE_MIN = 1
     const val TEMP_RISE_MAX = 30
+
+    /** DHT11 nemi 20-90% RH olcuyor; disinda bir esik uyariyi olu birakir. */
+    const val HUMIDITY_MIN = 20
+    const val HUMIDITY_MAX = 90
 
     // ---------------------------------------------------------------
     // HTTP
@@ -138,6 +148,8 @@ object Api {
         humidity = json.doubleOrNull("humidity"),
         gas = json.intOrNull("gas"),
         flame = json.intOrNull("flame"),
+        ageSeconds = json.intOrNull("age_seconds"),
+        stale = json.optBoolean("stale", false),
         fan = json.optInt("fan", 0) != 0 || json.optBoolean("fan", false),
         alarm = json.optInt("alarm", 0) != 0 || json.optBoolean("alarm", false)
     )
@@ -202,7 +214,9 @@ object Api {
                 gasThreshold = json.optInt("gas_threshold", 400),
                 flameThreshold = json.optInt("flame_threshold", 80),
                 tempRise = json.optInt("temp_rise", 5),
-                tempMax = json.optInt("temp_max", 45)
+                tempMax = json.optInt("temp_max", 45),
+                humidityHigh = json.optInt("humidity_high", 80),
+                humidityLow = json.optInt("humidity_low", 25)
             )
         )
     }

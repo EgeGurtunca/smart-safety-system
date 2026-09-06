@@ -123,6 +123,16 @@
 
         label { font-size: 14px; color: #444; }
 
+        .banner.stale {
+            background: #fee2e2;
+            border-color: #ef4444;
+            font-weight: bold;
+        }
+
+        .stale .value, .staleValues .value {
+            opacity: 0.45;
+        }
+
         .banner {
             background: #fef3c7;
             border: 1px solid #f59e0b;
@@ -190,6 +200,8 @@
 
     <h1>Smart Safety System</h1>
 
+    <div id="staleBanner" class="banner stale" style="display:none"></div>
+
     <div id="tokenBanner" class="banner" style="display:none">
         Kontrol için erişim anahtarı gerekli.
         <button onclick="askToken()">Anahtar gir</button>
@@ -237,6 +249,14 @@
 
             <label title="DHT11 en fazla 50 °C ölçebiliyor">Sıcaklık tavanı
                 <input id="tempMax" type="number" min="0" max="50">
+            </label>
+
+            <label title="DHT11 nemi 20-90% aralığında ölçüyor">Nem üst
+                <input id="humidityHigh" type="number" min="21" max="90">
+            </label>
+
+            <label title="DHT11 nemi 20-90% aralığında ölçüyor">Nem alt
+                <input id="humidityLow" type="number" min="20" max="89">
             </label>
 
             <button id="saveBtn" onclick="saveThresholds()">Kaydet</button>
@@ -298,10 +318,10 @@
 
 const TOKEN_KEY = "sss_token";
 
-// Nem uyari sinirlari. Alarm degil, sadece bilgilendirme:
-// fan, buzzer ve bildirim tetiklenmez.
-const HUMIDITY_HIGH = 95;
-const HUMIDITY_LOW = 5;
+// Nem uyari sinirlari artik sunucudan geliyor (commands tablosu).
+// Sunucu okunamazsa bunlar kullanilir; DHT11 20-90% RH olcuyor.
+const HUMIDITY_HIGH_FALLBACK = 80;
+const HUMIDITY_LOW_FALLBACK = 25;
 
 let windowMinutes = 15;
 let chart = null;
@@ -427,6 +447,12 @@ async function loadCommand() {
         if (document.activeElement !== riseInput) riseInput.value = data.temp_rise;
         if (document.activeElement !== maxInput) maxInput.value = data.temp_max;
 
+        const humHighInput = document.getElementById("humidityHigh");
+        const humLowInput = document.getElementById("humidityLow");
+
+        if (document.activeElement !== humHighInput) humHighInput.value = data.humidity_high;
+        if (document.activeElement !== humLowInput) humLowInput.value = data.humidity_low;
+
         updateHint();
 
     } catch (error) {
@@ -471,13 +497,45 @@ async function saveThresholds() {
         gas_threshold: Number(document.getElementById("gasThreshold").value),
         flame_threshold: Number(document.getElementById("flameThreshold").value),
         temp_rise: Number(document.getElementById("tempRise").value),
-        temp_max: Number(document.getElementById("tempMax").value)
+        temp_max: Number(document.getElementById("tempMax").value),
+        humidity_high: Number(document.getElementById("humidityHigh").value),
+        humidity_low: Number(document.getElementById("humidityLow").value)
     });
 
     if (result) {
         message.innerText = "Kaydedildi, cihaza iniyor...";
         setTimeout(() => { message.innerText = ""; }, 4000);
     }
+}
+
+
+function ageText(seconds) {
+
+    if (seconds === null || seconds === undefined) return "zamanı bilinmiyor";
+
+    if (seconds < 90) return seconds + " sn önce";
+    if (seconds < 5400) return Math.round(seconds / 60) + " dk önce";
+
+    return Math.round(seconds / 3600) + " saat önce";
+}
+
+
+function showStale(data) {
+
+    // Cihaz susarsa /api/latest son kaydi sonsuza kadar dondurur.
+    // Yasini sunucu hesapliyor: tarayicinin saati kaymissa yanilmayalim.
+    const banner = document.getElementById("staleBanner");
+    const stale = Boolean(data.stale);
+
+    banner.style.display = stale ? "block" : "none";
+
+    if (stale) {
+        banner.innerText =
+            "VERİ AKIŞI DURDU — son kayıt " + ageText(data.age_seconds) +
+            ". Aşağıdaki değerler güncel değil, sistem şu anda izlenmiyor.";
+    }
+
+    document.querySelector(".grid").className = stale ? "grid staleValues" : "grid";
 }
 
 
@@ -501,9 +559,9 @@ async function loadLatest() {
 
         if (wet === null || wet === undefined) {
             note.innerText = "";
-        } else if (wet >= HUMIDITY_HIGH) {
+        } else if (wet >= (desired ? desired.humidity_high : HUMIDITY_HIGH_FALLBACK)) {
             note.innerText = "ÇOK NEMLİ";
-        } else if (wet <= HUMIDITY_LOW) {
+        } else if (wet <= (desired ? desired.humidity_low : HUMIDITY_LOW_FALLBACK)) {
             note.innerText = "ÇOK KURU";
         } else {
             note.innerText = "";
@@ -516,12 +574,21 @@ async function loadLatest() {
         document.getElementById("fan").innerText = data.fan ? "AÇIK" : "KAPALI";
 
         const alarmBox = document.getElementById("alarm");
-        alarmBox.innerText = data.alarm ? "ALARM" : "NORMAL";
-        alarmBox.className = data.alarm ? "value danger" : "value normal";
+
+        // Veri bayatsa alarm durumu artik gecerli degil: "NORMAL" yazmak
+        // olu sistemi guvenli gostermek olur.
+        if (data.stale) {
+            alarmBox.innerText = "BİLİNMİYOR";
+            alarmBox.className = "value";
+        } else {
+            alarmBox.innerText = data.alarm ? "ALARM" : "NORMAL";
+            alarmBox.className = data.alarm ? "value danger" : "value normal";
+        }
 
         document.getElementById("lastUpdate").innerText =
             "Son güncelleme: " + new Date(data.created_at).toLocaleString();
 
+        showStale(data);
         updateHint();
 
     } catch (error) {

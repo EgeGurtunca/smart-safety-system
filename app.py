@@ -35,11 +35,20 @@ DEFAULT_COMMAND = {
     "gas_threshold": 400,
     "flame_threshold": 80,
     "temp_rise": 5,
-    "temp_max": 45
+    "temp_max": 45,
+    "humidity_high": 80,
+    "humidity_low": 25
 }
 
 # DHT11 sadece 0-50 C olcuyor; ustundeki bir tavan hic tetiklenmez.
 TEMP_MAX_LIMIT = 50
+
+# DHT11 nemi 20-90% RH olcuyor. Disindaki bir esik uyariyi olu birakir.
+HUMIDITY_MIN_LIMIT = 20
+HUMIDITY_MAX_LIMIT = 90
+
+# Cihaz 5 saniyede bir gonderiyor. Bundan eski veri "akis durdu" demek.
+STALE_SECONDS = 60
 
 
 def now_iso():
@@ -163,7 +172,9 @@ def device_command(command):
         "gt": int(command.get("gas_threshold") or DEFAULT_COMMAND["gas_threshold"]),
         "ft": int(command.get("flame_threshold") or DEFAULT_COMMAND["flame_threshold"]),
         "tr": int(command.get("temp_rise") or DEFAULT_COMMAND["temp_rise"]),
-        "tm": int(command.get("temp_max") or DEFAULT_COMMAND["temp_max"])
+        "tm": int(command.get("temp_max") or DEFAULT_COMMAND["temp_max"]),
+        "hh": int(command.get("humidity_high") or DEFAULT_COMMAND["humidity_high"]),
+        "hl": int(command.get("humidity_low") or DEFAULT_COMMAND["humidity_low"])
     }
 
 
@@ -223,6 +234,30 @@ def alarm_message(record, command):
         "Sicaklik: " + str(record.get("temperature")) + " C  "
         "Nem: " + str(record.get("humidity")) + " %"
     )
+
+
+def age_seconds(created_at):
+    """Kaydin kac saniye once yazildigi.
+
+    Sunucu saatiyle hesaplaniyor: telefonun ya da tarayicinin saati
+    kaymissa istemci tarafinda yapilan hesap yaniltir. Olculemezse
+    None doner -- istemci "bilmiyorum" ile "taze" arasindaki farki
+    gorebilsin, eskiyi taze sanmasin.
+    """
+
+    if not created_at:
+        return None
+
+    try:
+        stamp = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+
+    except ValueError:
+        return None
+
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+
+    return max(0, int((datetime.now(timezone.utc) - stamp).total_seconds()))
 
 
 def cooldown_passed(command):
@@ -345,6 +380,8 @@ def get_command():
             "flame_threshold": command.get("flame_threshold"),
             "temp_rise": command.get("temp_rise"),
             "temp_max": command.get("temp_max"),
+            "humidity_high": command.get("humidity_high"),
+            "humidity_low": command.get("humidity_low"),
             "updated_at": command.get("updated_at")
         })
 
@@ -378,7 +415,9 @@ def set_command():
         ("gas_threshold", 0, 1023),
         ("flame_threshold", 0, 1023),
         ("temp_rise", 1, 30),
-        ("temp_max", 0, TEMP_MAX_LIMIT)
+        ("temp_max", 0, TEMP_MAX_LIMIT),
+        ("humidity_high", HUMIDITY_MIN_LIMIT + 1, HUMIDITY_MAX_LIMIT),
+        ("humidity_low", HUMIDITY_MIN_LIMIT, HUMIDITY_MAX_LIMIT - 1)
     ):
 
         if key not in data:
@@ -437,7 +476,19 @@ def latest():
         )
 
         if response.data:
-            return jsonify(response.data[0])
+
+            row = dict(response.data[0])
+
+            # Cihaz susarsa /api/latest son kaydi sonsuza kadar dondurur ve
+            # olu sistem "guvende" gorunur. Yasi da gonderiyoruz ki istemci
+            # bayat veriyi canli sanmasin.
+            row["age_seconds"] = age_seconds(row.get("created_at"))
+            row["stale"] = (
+                row["age_seconds"] is None or
+                row["age_seconds"] > STALE_SECONDS
+            )
+
+            return jsonify(row)
 
         return jsonify({})
 

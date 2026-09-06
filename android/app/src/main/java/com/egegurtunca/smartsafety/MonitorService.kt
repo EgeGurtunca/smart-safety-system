@@ -33,9 +33,11 @@ class MonitorService : Service() {
 
         private const val CHANNEL_STATUS = "status"
         private const val CHANNEL_ALARM = "alarm"
+        private const val CHANNEL_OFFLINE = "offline"
 
         private const val STATUS_ID = 1
         private const val ALARM_ID = 2
+        private const val OFFLINE_ID = 3
 
         private const val POLL_MS = 10_000L
 
@@ -62,6 +64,9 @@ class MonitorService : Service() {
     // null = henuz olcum yok. Bildirim sadece 0 -> 1 gecisinde atilir,
     // alarm surerken tekrar tekrar otmez.
     private var lastAlarm: Boolean? = null
+
+    // Ayni kenar tetikleme veri akisi kesildiginde de gecerli.
+    private var lastStale: Boolean? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -119,6 +124,26 @@ class MonitorService : Service() {
 
                 updateStatus(summary(reading))
 
+                // Veri bayatsa cihaz susmus demektir: alarm durumu artik
+                // gecerli degil. "Normal" demek olu sistemi guvenli
+                // gostermek olur -- bu sistemin en tehlikeli hata modu.
+                if (reading.stale) {
+
+                    if (lastStale != true) {
+                        notifyOffline(reading)
+                    }
+
+                    lastStale = true
+                    lastAlarm = null
+                    return
+                }
+
+                if (lastStale == true) {
+                    manager().cancel(OFFLINE_ID)
+                }
+
+                lastStale = false
+
                 if (reading.alarm && lastAlarm != true) {
                     notifyAlarm(reading)
                 }
@@ -139,6 +164,10 @@ class MonitorService : Service() {
             ?.let { String.format("%.1f", it) }
             ?: "--"
 
+        if (reading.stale) {
+            return "VERİ AKIŞI DURDU — son kayıt " + ageText(reading.ageSeconds)
+        }
+
         return if (reading.alarm) {
             "ALARM — Gaz $gas, Alev $flame"
         } else {
@@ -149,6 +178,19 @@ class MonitorService : Service() {
     // -----------------------------------------------------------------
     // Bildirimler
     // -----------------------------------------------------------------
+
+    /** "3 dk once" gibi okunabilir yas. */
+    private fun ageText(seconds: Int?): String {
+
+        if (seconds == null) return "zamanı bilinmiyor"
+
+        return when {
+            seconds < 90 -> "$seconds sn önce"
+            seconds < 5400 -> "${seconds / 60} dk önce"
+            else -> "${seconds / 3600} saat önce"
+        }
+    }
+
 
     private fun manager(): NotificationManager =
         getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -183,8 +225,19 @@ class MonitorService : Service() {
             )
         }
 
+        // Alarm kanalindan ayri ve daha sakin: gece bir WiFi kesintisi
+        // seni alarm sesiyle uyandirmasin, ama gormeden de gecme.
+        val offline = NotificationChannel(
+            CHANNEL_OFFLINE,
+            "Bağlantı",
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = "Cihazdan veri gelmiyor"
+        }
+
         manager().createNotificationChannel(status)
         manager().createNotificationChannel(alarm)
+        manager().createNotificationChannel(offline)
     }
 
     private fun openAppIntent(): PendingIntent {
@@ -236,5 +289,21 @@ class MonitorService : Service() {
             .build()
 
         manager().notify(ALARM_ID, notification)
+    }
+
+    private fun notifyOffline(reading: Reading) {
+
+        val notification = NotificationCompat.Builder(this, CHANNEL_OFFLINE)
+            .setContentTitle("Sistem izlenmiyor")
+            .setContentText(
+                "Cihazdan veri gelmiyor. Son kayıt " + ageText(reading.ageSeconds) + "."
+            )
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setContentIntent(openAppIntent())
+            .build()
+
+        manager().notify(OFFLINE_ID, notification)
     }
 }

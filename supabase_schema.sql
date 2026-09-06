@@ -24,8 +24,15 @@ on conflict (id) do nothing;
 alter table commands add column if not exists temp_rise int default 5;
 alter table commands add column if not exists temp_max int default 45;
 
-update commands set temp_rise = coalesce(temp_rise, 5),
-                    temp_max  = coalesce(temp_max, 45)
+-- Nem uyari sinirlari. DHT11 20-90% RH olcuyor; disinda bir esik
+-- uyariyi hic tetiklenmez hale getirir.
+alter table commands add column if not exists humidity_high int default 80;
+alter table commands add column if not exists humidity_low int default 25;
+
+update commands set temp_rise     = coalesce(temp_rise, 5),
+                    temp_max      = coalesce(temp_max, 45),
+                    humidity_high = coalesce(humidity_high, 80),
+                    humidity_low  = coalesce(humidity_low, 25)
 where id = 1;
 
 -- Gecmis sorgulari zaman araligiyla filtreliyor.

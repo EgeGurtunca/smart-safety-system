@@ -57,6 +57,8 @@ int cmdGas = 400;
 int cmdFlame = 80;
 int cmdTempRise = 5;
 int cmdTempMax = 45;
+int cmdHumHigh = 80;
+int cmdHumLow = 25;
 
 unsigned long lastSend = 0;
 unsigned long lastBlink = 0;
@@ -295,7 +297,9 @@ void sendCommandToArduino() {
     ",G" + String(cmdGas) +
     ",L" + String(cmdFlame) +
     ",R" + String(cmdTempRise) +
-    ",X" + String(cmdTempMax);
+    ",X" + String(cmdTempMax) +
+    ",H" + String(cmdHumHigh) +
+    ",W" + String(cmdHumLow);
 
   arduinoSerial.println(line);
 
@@ -385,7 +389,7 @@ void sendToServer() {
 
     // -------------------------------------------
     // Komut cevaba binmis halde geliyor:
-    // {"success":true,"cmd":{"fan":0,"mute":0,"gt":400,"ft":80,"tr":5,"tm":45}}
+    // {"success":true,"cmd":{"fan":0,"mute":0,"gt":400,"ft":80,"tr":5,"tm":45,"hh":80,"hl":25}}
     // -------------------------------------------
 
     if (httpCode == 200 && response.indexOf("\"cmd\"") >= 0) {
@@ -396,10 +400,13 @@ void sendToServer() {
       int flameValue = extractInt(response, "ft", -1);
       int riseValue = extractInt(response, "tr", -1);
       int maxValue = extractInt(response, "tm", -1);
+      int humHighValue = extractInt(response, "hh", -1);
+      int humLowValue = extractInt(response, "hl", -1);
 
       if (fanValue >= 0 && muteValue >= 0 &&
           gasValue >= 0 && flameValue >= 0 &&
-          riseValue >= 0 && maxValue >= 0) {
+          riseValue >= 0 && maxValue >= 0 &&
+          humHighValue >= 0 && humLowValue >= 0) {
 
         cmdFan = fanValue;
         cmdMute = muteValue;
@@ -407,6 +414,8 @@ void sendToServer() {
         cmdFlame = flameValue;
         cmdTempRise = riseValue;
         cmdTempMax = maxValue;
+        cmdHumHigh = humHighValue;
+        cmdHumLow = humLowValue;
 
         sendCommandToArduino();
 
@@ -433,8 +442,12 @@ void setup() {
   // USB serial
   Serial.begin(9600);
 
-  // Arduino serial
-  arduinoSerial.begin(9600);
+  // Arduino serial.
+  //
+  // Varsayilan 64 baytlik tampon yetmiyor: sendToServer() TLS el
+  // sikismasi icin 1-3 saniye bloklarken Arduino saniyede bir ~45
+  // baytlik satir gonderiyor. Ikinci satirda tasip veriyi bozuyordu.
+  arduinoSerial.begin(9600, SWSERIAL_8N1, D7, D6, false, 256);
 
   // Satir sonu gelmezse 1 saniye kilitlenmesin.
   arduinoSerial.setTimeout(200);
