@@ -29,7 +29,7 @@ Komut ayrı bir kanaldan inmiyor: NodeMCU'nun 5 saniyede bir attığı POST'un
 Aynı veriye iki yerden bakabilirsin: Render adresindeki site ve Android
 uygulaması. `/health` sunucunun ayakta olup olmadığını döner.
 
-NodeMCU **hiçbir zaman HTML göndermez** — sunucuya sadece 88 baytlık JSON gider.
+NodeMCU **hiçbir zaman HTML göndermez**; sunucuya sadece 88 baytlık JSON gider.
 
 ## Bağlantılar
 
@@ -38,7 +38,7 @@ NodeMCU **hiçbir zaman HTML göndermez** — sunucuya sadece 88 baytlık JSON g
 | Pin | Bağlı |
 |---|---|
 | D2 | DHT11 DATA |
-| D3 | Buzzer (+) — passive buzzer, `tone()` kullanılıyor |
+| D3 | Buzzer (+), passive buzzer, `tone()` kullanılıyor |
 | D4 | Buton (diğer bacak GND, `INPUT_PULLUP`, harici direnç yok) |
 | D5 | Röle IN |
 | D6 | Yeşil LED → 220Ω → GND |
@@ -58,7 +58,7 @@ MQ-2 ve alev sensörünün DO uçları kullanılmıyor, analog okunuyor.
 
 ### Arduino ↔ NodeMCU
 
-İki yön de gerekli — tek yön bağlıysa veri akar ama kontrol çalışmaz.
+İki yön de gerekli: tek yön bağlıysa veri akar ama kontrol çalışmaz.
 
 **Yukarı (veri), 5V → 3.3V bölücü ile:**
 
@@ -114,12 +114,12 @@ katmanın 500 MB'ı birkaç ayda dolar.
 | `TELEGRAM_CHAT_ID` | isteğe bağlı | Yedek bildirim kanalı |
 
 `API_TOKEN` tanımlı değilse: veri akışı çalışır, ama **kontrol uçları
-kapalıdır** — kimse uzaktan fanı açamaz.
+kapalıdır**; kimse uzaktan fanı açamaz.
 
 Telegram isteğe bağlı: asıl bildirim artık Android uygulamasından geliyor.
 İkisi birlikte de çalışır.
 
-### 3. Firmware — SIRA ÖNEMLİ
+### 3. Firmware (SIRA ÖNEMLİ)
 
 1. **Önce NodeMCU'yu yak.** `sketch_aug13b.ino` içindeki `ssid`, `password` ve
    `apiToken` değerlerini doldur. `apiToken`, Render'a koyacağın `API_TOKEN` ile
@@ -149,7 +149,7 @@ Telefona kur (USB hata ayıklama açıkken):
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-APK'yı telefona kopyalayıp dosya yöneticisinden de kurabilirsin — "bilinmeyen
+APK'yı telefona kopyalayıp dosya yöneticisinden de kurabilirsin; "bilinmeyen
 kaynaklardan yükleme" izni gerekir.
 
 Uygulamayı ilk açtığında **Ayarlar** bölümüne sunucu adresini ve `API_TOKEN`'ı
@@ -162,7 +162,7 @@ yokluyor ve alarmı kendisi bildiriyor. One UI varsayılan olarak kullanılmayan
 uygulamaları uyutur, bu da bildirimi sessizce keser:
 
 **Ayarlar → Batarya ve cihaz bakımı → Batarya → Arka planda kullanım sınırları**
-— Smart Safety'nin "Uyuyan uygulamalar" ve "Derin uyuyan uygulamalar"
+Smart Safety'nin "Uyuyan uygulamalar" ve "Derin uyuyan uygulamalar"
 listelerinde **olmadığından** emin ol.
 
 Ayrıca uygulama bilgisi → Batarya → **Kısıtlanmamış** seç.
@@ -170,7 +170,7 @@ Ayrıca uygulama bilgisi → Batarya → **Kısıtlanmamış** seç.
 ## Kontrol kuralları
 
 **Fan uzaktan sadece AÇILIR.** Cihazda mantık `alarm || buton || uzaktanFan`.
-Alarm varken telefondan fan kapatılamaz — bu bir güvenlik sistemi, uzaktan
+Alarm varken telefondan fan kapatılamaz. Bu bir güvenlik sistemi, uzaktan
 kumanda değil.
 
 **Susturma kendini sıfırlar.** Alarm bittiğinde sunucu `mute`'u temizler.
